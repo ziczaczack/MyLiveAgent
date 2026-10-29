@@ -4,14 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-No code exists yet. The repo holds two planning documents (in Chinese), which are the source of truth for scope and design:
+M1 thin slice runs from the console (typed events, no TikTok, Live2D or OBS yet). The Chinese planning documents are the source of truth for scope and design:
 
 - `AI Chibi 直播搭档 — 架构与方案提案.docx`: architecture, tech choices, latency/cost budgets, risks, planned directory layout.
 - `短视频涨粉计划.docx`: a 14-day TikTok short-video plan. Several videos depend on dev milestones (e.g. Day 5 needs M1 brain + TTS; Day 8 needs the safety layer; Day 12 needs gift routing), so milestone order matters.
 
 To read them: `python -I` with `zipfile` on `word/document.xml`. Write the output to a UTF-8 file; the Windows console is cp1252 and `-I` ignores `PYTHONIOENCODING`.
 
-When code is added, update this file with the real build, run and test commands. Don't assume any from the plan.
+## Commands
+
+- Setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env` and set `DEEPSEEK_API_KEY`.
+- Run: `.venv/Scripts/python -m app`
+- All tests: `.venv/Scripts/python -m pytest -q`
+- One test: `.venv/Scripts/python -m pytest tests/test_safety.py::test_no_scunthorpe -v`
 
 ## What is being built
 

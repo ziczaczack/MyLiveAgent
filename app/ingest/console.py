@@ -1,6 +1,7 @@
 """Console input: parse typed lines into events or commands."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.events import Event, Kind
@@ -59,3 +60,29 @@ def parse_line(line: str) -> Event | Command | ParseError | None:
     if head in COMMANDS:
         return Command(head, rest)
     return ParseError(f"unknown command /{head}. Type /help for the list.")
+
+
+class ConsoleIngest:
+    """Reads typed lines (and OS dictation typed into the console) until quit/EOF."""
+
+    def __init__(self, on_line: Callable[[Event | Command | ParseError], None]) -> None:
+        self._on_line = on_line
+
+    async def run(self) -> None:
+        from prompt_toolkit import PromptSession
+        from prompt_toolkit.patch_stdout import patch_stdout
+
+        session = PromptSession()
+        with patch_stdout():
+            while True:
+                try:
+                    line = await session.prompt_async("> ")
+                except (EOFError, KeyboardInterrupt):
+                    self._on_line(Command("quit"))
+                    return
+                parsed = parse_line(line)
+                if parsed is None:
+                    continue
+                self._on_line(parsed)
+                if isinstance(parsed, Command) and parsed.name == "quit":
+                    return
