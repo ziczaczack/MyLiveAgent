@@ -136,9 +136,11 @@ def _sec(v: float | None) -> str:
 def format_reply(rec: ReplyRecord, session_per_hour: float) -> str:
     st = rec.stages()
     total = _DASH if st["total"] is None else f"{st['total']:.1f}s"
+    err = f"\n  ! error: {rec.error[:160]}" if rec.error else ""
     return (
         f"{rec.label}\n"
         f"  {rec.emotion:<5} | {rec.say}\n"
         f"  {total} total  (llm {_sec(st['llm'])} · tts {_sec(st['tts'])} · play {_sec(st['play'])})"
         f"  · ${rec.cost:.5f}  · session ${session_per_hour:.3f}/h"
+        f"{err}"
     )

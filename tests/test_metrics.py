@@ -91,3 +91,10 @@ def test_is_peak_normalises_to_utc():
     tz8 = timezone(timedelta(hours=8))
     assert is_peak(datetime(2026, 11, 2, 9, tzinfo=tz8), P.peak_windows_utc) is True    # 01:00 UTC Mon
     assert is_peak(datetime(2026, 11, 2, 8, tzinfo=tz8), P.peak_windows_utc) is False   # Sun 00:00 UTC
+
+
+def test_format_reply_shows_truncated_error():
+    out = format_reply(make_rec(error="api: AuthenticationError: " + "x" * 300), 0.0)
+    lines = out.splitlines()
+    assert len(lines) == 4 and lines[3].startswith("  ! error: api: AuthenticationError")
+    assert len(lines[3]) <= len("  ! error: ") + 160

@@ -1,6 +1,6 @@
 character_name: "Chibi"   # placeholder until viewers name it (video Day 3)
 dev_name: "Lok"           # the owner's on-stream name
-session_token_cap: 200000
+session_cost_cap_usd: 3.00   # past this, only gifts, dev and self-harm get replies
 max_viewer_chars: 200
 max_viewer_name_chars: 32
 hotkey: "<ctrl>+<alt>+m"  # Ctrl+Alt+M mutes; never bind Alt+Space
@@ -11,6 +11,8 @@ llm:
   api_key_env: DEEPSEEK_API_KEY
   max_tokens: 150
   first_token_timeout_s: 6
+  request_timeout_s: 10      # SDK connect/read timeout per request
+  total_reply_timeout_s: 15  # whole streamed reply
   history_turns: 16
   json_mode: true
   extra_body:
@@ -32,6 +34,7 @@ tts:
   voice: en-SG-LunaNeural
   rate: "+0%"
   pitch: "+0Hz"
+  timeout_s: 10
 
 mock:
   interval_s: [2.0, 6.0]

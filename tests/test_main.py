@@ -71,4 +71,48 @@ async def test_auto_stats_help_commands(tmp_path, capsys):
     assert "(auto is already off)" in out and "(auto on)" in out and "(auto is already on)" in out
     assert "(auto off)" in out
     assert out.count("replies") >= 2  # /stats plus the exit summary
-    assert "reply failed" in out  # mock events reached the pipeline (fake client fails)
+    assert "! error: api: AttributeError" in out  # mock events reached the pipeline (fake client fails; error now shown)
+
+
+async def test_logging_goes_to_app_log_not_stderr(tmp_path, capsys):
+    import asyncio
+    import logging
+    from pathlib import Path
+
+    from app.config import load_settings
+    from app.main import run
+
+    class Boom:
+        def __init__(self, on_line): pass
+
+        async def run(self):
+            raise RuntimeError("ingest died")
+
+    class Sink:
+        async def play(self, b): pass
+        def stop(self): pass
+
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    st.paths.logs_dir = tmp_path / "logs"
+    before = list(logging.getLogger().handlers)
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Boom), 5)
+    assert "ingest died" in (tmp_path / "logs" / "app.log").read_text(encoding="utf-8")
+    assert "Traceback" not in capsys.readouterr().err
+    assert logging.getLogger().handlers == before
+
+
+async def test_unwritable_logs_dir_is_a_one_line_error(tmp_path):
+    from pathlib import Path
+
+    import pytest
+
+    from app.config import ConfigError, load_settings
+    from app.main import run
+
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    st.paths.logs_dir = blocker / "logs"
+    with pytest.raises(ConfigError) as e:
+        await run(st, client=object(), tts=object(), sink=object())
+    assert str(e.value).startswith("(cannot write logs to ")

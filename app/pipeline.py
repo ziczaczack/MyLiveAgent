@@ -17,6 +17,10 @@ from app.safety import Safety
 from app.tts.base import TTS
 
 
+_AUTH_MARKERS = ("authenticationerror", "permissiondenied", "401", "402", "insufficient balance")
+_AUTH_HINT = "!!! DeepSeek rejected the request — check DEEPSEEK_API_KEY in .env and your account balance."
+
+
 def event_label(ev: Event) -> str:
     if ev.kind is Kind.DEV:
         return f"[dev] {ev.text}"
@@ -38,32 +42,44 @@ class Pipeline:
         self._metrics, self._s, self._out = metrics, settings, out
         self._rng = rng or random.Random()
         self._clock = clock
+        self._auth_hint_shown = False
 
     def over_budget(self) -> bool:
-        return self._metrics.total_tokens >= self._s.session_token_cap
+        return self._metrics.total_cost >= self._s.session_cost_cap_usd
+
+    async def _synthesize(self, text: str) -> bytes:
+        return await asyncio.wait_for(self._tts.synthesize(text), self._s.tts.timeout_s)
+
+    def _note_error(self, error: str | None) -> None:
+        if error and not self._auth_hint_shown and any(m in error.lower() for m in _AUTH_MARKERS):
+            self._auth_hint_shown = True
+            self._out(_AUTH_HINT)
 
     def _speak(self, text: str, rec: ReplyRecord) -> None:
         if rec.first_sentence_at is None:
             rec.first_sentence_at = self._clock()
-        self._player.enqueue(asyncio.create_task(self._tts.synthesize(text)))
+        self._player.enqueue(asyncio.create_task(self._synthesize(text)))
 
     async def handle(self, ev: Event, routed_at: float | None = None) -> ReplyRecord:
         routed_at = self._clock() if routed_at is None else routed_at
         label = event_label(ev)
-        self._out(f"{label}\n  thinking...")
+        over = self.over_budget()
+        flagged = "self_harm" in ev.topics
+        silent_skip = over and not flagged and ev.kind is Kind.QUIET
+        if not silent_skip:
+            self._out(f"{label}\n  thinking...")
         rec = ReplyRecord(label=label, kind=str(ev.kind), received_at=ev.received_at, routed_at=routed_at,
                           first_token_at=None, first_sentence_at=None, first_audio_at=None,
                           play_start_at=None, done_at=None, usage=Usage(), cost=0.0,
                           say="", emotion="neutral", action=None)
 
-        over = self.over_budget()
-        flagged = "self_harm" in ev.topics
         if flagged:
             self._out(f"!!! SELF-HARM FLAG from {ev.viewer or 'dev'}: {ev.text}")
         if over and not flagged and ev.kind not in (Kind.GIFT, Kind.DEV):
             rec.error = "over_budget"
             rec.done_at = self._clock()
-            self._out("  (skipped: session token cap reached)")
+            if not silent_skip:
+                self._out("  (skipped: session cost cap reached)")
             return rec
         event_text = describe_event(ev, self._s.character_name, self._s.dev_name,
                                     self._s.max_viewer_name_chars)
@@ -74,7 +90,7 @@ class Pipeline:
         async def on_sentence(s: str) -> bool:
             verdict = self._safety.check_output(s, ev.topics, ev.viewer)
             if not verdict.ok:
-                rec.safety.append(verdict.reason or "blocked")
+                rec.safety.append(f"{verdict.reason or 'blocked'}: {s}")
                 line = self._rng.choice(self._s.lines.deflection)
                 self._speak(line, rec)
                 spoken.append(line)
@@ -109,5 +125,6 @@ class Pipeline:
             self._metrics.add(rec)
         except OSError as e:
             self._out(f"(log write failed: {e})")
+        self._note_error(rec.error)
         self._out(format_reply(rec, self._metrics.cost_per_hour()))
         return rec

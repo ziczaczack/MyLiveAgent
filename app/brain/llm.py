@@ -32,7 +32,7 @@ class Brain:
     def remember(self, event_text: str, spoken: str, emotion: str, action: str | None) -> None:
         reply = json.dumps({"say": spoken, "emotion": emotion, "action": action}, ensure_ascii=False)
         self.history.append((event_text, reply))
-        del self.history[:-self._s.history_turns]
+        del self.history[:max(0, len(self.history) - self._s.history_turns)]
 
     async def reply(self, event_text: str, on_sentence: Callable[[str], Awaitable[bool]],
                     max_tokens: int | None = None) -> BrainResult:
@@ -50,14 +50,14 @@ class Brain:
         stream = None
         try:
             try:
-                async with asyncio.timeout(self._s.first_token_timeout_s):
-                    stream = await self._client.chat.completions.create(**kwargs)
-                    it = stream.__aiter__()
-                    first = await self._first_content(it, res)
+                async with asyncio.timeout(self._s.total_reply_timeout_s):
+                    async with asyncio.timeout(self._s.first_token_timeout_s):
+                        stream = await self._client.chat.completions.create(**kwargs)
+                        it = stream.__aiter__()
+                        first = await self._first_content(it, res)
+                    await self._consume(it, first, res, on_sentence)
             except TimeoutError:
                 res.error = "timeout"
-                return res
-            await self._consume(it, first, res, on_sentence)
         except Exception as e:  # noqa: BLE001 - nothing may escape reply()
             res.error = f"api: {type(e).__name__}: {e}"
         finally:

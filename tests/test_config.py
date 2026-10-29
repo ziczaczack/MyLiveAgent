@@ -15,6 +15,8 @@ def test_loads_shipped_settings():
     assert s.router.max_ordinary_queued == 5 and s.hotkey == "<ctrl>+<alt>+m"
     assert len(s.lines.brain_lag) >= 3 and len(s.lines.deflection) >= 3
     assert s.paths.logs_dir == Path("logs")
+    assert s.session_cost_cap_usd == 3.0 and not hasattr(s, "session_token_cap")
+    assert s.llm.request_timeout_s == 10 and s.llm.total_reply_timeout_s == 15 and s.tts.timeout_s == 10
 
 
 @pytest.mark.parametrize("env", [{}, {"DEEPSEEK_API_KEY": "  "}])

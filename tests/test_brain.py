@@ -11,7 +11,7 @@ from app.metrics import Usage
 @pytest.fixture
 def settings_llm():
     return LLMSettings(base_url="http://x", model="m", api_key="k", max_tokens=150,
-                       first_token_timeout_s=6.0, history_turns=16,
+                       first_token_timeout_s=6.0, request_timeout_s=10.0, total_reply_timeout_s=15.0, history_turns=16,
                        extra_body={"thinking": {"type": "disabled"}}, json_mode=True)
 
 
@@ -141,3 +141,34 @@ async def test_history_goes_into_messages(settings_llm):
     await b.reply("ev", lambda s: _append([], s))
     roles = [m["role"] for m in c.last_kwargs["messages"]]
     assert roles == ["system", "user", "assistant", "user"]
+
+
+def test_history_zero_turns_keeps_nothing(settings_llm):
+    settings_llm.history_turns = 0
+    b = Brain(None, settings_llm, "P")
+    b.remember("e", "s", "happy", None)
+    assert b.history == []
+
+
+class StallStream(FakeStream):
+    async def _gen(self):
+        for p in self.pieces:
+            yield _chunk(p)
+        await asyncio.sleep(30)
+
+
+async def test_stall_after_first_chunk_hits_total_timeout(settings_llm):
+    settings_llm.total_reply_timeout_s = 0.1
+    c = FakeClient()
+    stream = StallStream(['{"say": "Hello there. Still going'])
+
+    async def create(**kw):
+        c.stream = stream
+        return stream
+
+    c.chat.completions.create = create
+    got = []
+    t0 = asyncio.get_running_loop().time()
+    r = await Brain(c, settings_llm, "P").reply("ev", lambda s: _append(got, s))
+    assert asyncio.get_running_loop().time() - t0 < 2
+    assert r.error == "timeout" and got == ["Hello there."] and stream.closed

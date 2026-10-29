@@ -51,13 +51,32 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
                                    settings.max_viewer_chars, settings.max_viewer_name_chars)
     except (OSError, yaml.YAMLError) as e:
         raise ConfigError(f"Could not load safety lists: {e}") from None
+    try:
+        metrics = SessionMetrics(settings.paths.logs_dir, time.perf_counter())
+        log_handler = logging.FileHandler(Path(settings.paths.logs_dir) / "app.log", encoding="utf-8")
+    except OSError as e:
+        raise ConfigError(f"(cannot write logs to {settings.paths.logs_dir}: {e})") from None
+    log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(log_handler)
+    root.setLevel(logging.INFO)
+    try:
+        await _run(settings, persona, safety, metrics, client, tts, sink, ingest_factory,
+                   hotkeys_factory, hotkey_ready_timeout)
+    finally:
+        root.removeHandler(log_handler)
+        log_handler.close()
+
+
+async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_factory,
+               hotkeys_factory, hotkey_ready_timeout) -> None:
     own_client = client is None
     if own_client:
-        client = openai.AsyncOpenAI(base_url=settings.llm.base_url, api_key=settings.llm.api_key)
+        client = openai.AsyncOpenAI(base_url=settings.llm.base_url, api_key=settings.llm.api_key,
+                                     timeout=settings.llm.request_timeout_s, max_retries=1)
     brain = Brain(client, settings.llm, persona)
     player = Player(sink or SoundDeviceSink())
     player.start()
-    metrics = SessionMetrics(settings.paths.logs_dir, time.perf_counter())
     pipeline = Pipeline(brain, safety, tts or EdgeTTS(settings.tts), player, metrics, settings)
 
     router = Router(settings.router, settings.character_name)

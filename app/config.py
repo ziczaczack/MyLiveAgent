@@ -20,6 +20,8 @@ class LLMSettings:
     api_key: str
     max_tokens: int
     first_token_timeout_s: float
+    request_timeout_s: float
+    total_reply_timeout_s: float
     history_turns: int
     extra_body: dict
     json_mode: bool
@@ -52,6 +54,7 @@ class TTSSettings:
     voice: str
     rate: str
     pitch: str
+    timeout_s: float
 
 
 @dataclass
@@ -73,7 +76,7 @@ class Paths:
 class Settings:
     character_name: str
     dev_name: str
-    session_token_cap: int
+    session_cost_cap_usd: float
     max_viewer_chars: int
     max_viewer_name_chars: int
     hotkey: str
@@ -106,7 +109,7 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
         return Settings(
             character_name=raw["character_name"],
             dev_name=raw["dev_name"],
-            session_token_cap=int(raw["session_token_cap"]),
+            session_cost_cap_usd=float(raw["session_cost_cap_usd"]),
             max_viewer_chars=int(raw["max_viewer_chars"]),
             max_viewer_name_chars=int(raw["max_viewer_name_chars"]),
             hotkey=raw["hotkey"],
@@ -116,6 +119,8 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
                 api_key=api_key,
                 max_tokens=int(llm["max_tokens"]),
                 first_token_timeout_s=float(llm["first_token_timeout_s"]),
+                request_timeout_s=float(llm["request_timeout_s"]),
+                total_reply_timeout_s=float(llm["total_reply_timeout_s"]),
                 history_turns=int(llm["history_turns"]),
                 extra_body=dict(llm.get("extra_body") or {}),
                 json_mode=bool(llm["json_mode"]),
@@ -126,7 +131,7 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
                 peak_windows_utc=[(int(a), int(b)) for a, b in pr["peak_windows_utc"]],
             ),
             router=RouterSettings(**raw["router"]),
-            tts=TTSSettings(**raw["tts"]),
+            tts=TTSSettings(**{**raw["tts"], "timeout_s": float(raw["tts"]["timeout_s"])}),
             lines=Lines(
                 brain_lag=list(raw["lines"]["brain_lag"]),
                 deflection=list(raw["lines"]["deflection"]),

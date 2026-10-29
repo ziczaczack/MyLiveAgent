@@ -15,6 +15,9 @@ _LEET = str.maketrans({"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t
 _SINGLE_RUN = re.compile(r"(?<![a-z0-9])[a-z](?: [a-z])+(?![a-z0-9])")
 
 
+_HARD_LIMIT = frozenset({"sexual", "minors"})  # never allowed to reach the model or speech via a viewer name
+
+
 @dataclass
 class OutputVerdict:
     ok: bool
@@ -92,7 +95,8 @@ class Safety:
 
     def _topics_in(self, s: str, viewer: str = "") -> frozenset[str]:
         forms = _forms(s)
-        names = [re.compile(rf"\b{re.escape(t)}\b") for t in _spaced(viewer).split()]
+        names = [re.compile(rf"\b{re.escape(t)}\b") for t in _spaced(viewer).split()
+                 if not self._topics_in(t) & _HARD_LIMIT]
         if names:
             cleaned = set()
             for f in forms:
@@ -106,13 +110,14 @@ class Safety:
         topics = self._topics_in(ev.text)
         if ev.kind is Kind.DEV:
             return dataclasses.replace(ev, topics=topics)
-        if self._blocked(ev.viewer) or self._blocked(ev.text):
+        if self._blocked(ev.viewer) or self._blocked(ev.text) or self._blocked(ev.gift or ""):
             return None
+        viewer = "viewer" if self._topics_in(ev.viewer) & _HARD_LIMIT else ev.viewer[: self.max_name_chars]
         return dataclasses.replace(
             ev,
             topics=topics,
             text=ev.text[: self.max_viewer_chars],
-            viewer=ev.viewer[: self.max_name_chars],
+            viewer=viewer,
         )
 
     def check_output(self, sentence: str, input_topics: frozenset[str], viewer: str = "") -> OutputVerdict:

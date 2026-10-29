@@ -86,3 +86,22 @@ def test_ambiguous_topic_terms_removed():
 def test_self_harm_shorthand_tagged():
     assert REAL.check_input(C("i wanna kms")).topics == {"self_harm"}
     assert REAL.check_input(C("donald trump")).topics == {"politics"}
+
+
+def test_viewer_name_with_hard_limit_word_is_replaced():
+    ev = REAL.check_input(Event(Kind.FOLLOW, viewer="loli_porn_nudes"))
+    assert ev is not None and ev.viewer == "viewer"
+    ev = REAL.check_input(Event(Kind.COMMENT, viewer="minor_nsfw", text="hi"))
+    assert ev.viewer == "viewer"
+    assert not REAL.check_output("Welcome loli_porn_nudes, love the loli porn vibe.", frozenset(),
+                                 viewer="loli_porn_nudes").ok
+
+
+def test_viewer_name_other_categories_kept():
+    assert REAL.check_input(Event(Kind.FOLLOW, viewer="Christian")).viewer == "Christian"
+    assert REAL.check_output("Thanks Christian for the rose!", frozenset(), viewer="Christian").ok
+
+
+def test_blocklisted_gift_name_dropped():
+    assert S.check_input(Event(Kind.GIFT, viewer="v", gift="shit bomb")) is None
+    assert S.check_input(Event(Kind.GIFT, viewer="v", gift="Rose")) is not None

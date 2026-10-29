@@ -1,3 +1,4 @@
+import asyncio
 import random
 from pathlib import Path
 
@@ -24,11 +25,13 @@ class FakeSink:
 
 
 class FakeTTS:
-    def __init__(self, fail=None):
-        self.fail, self.said = fail, []
+    def __init__(self, fail=None, delay=0.0):
+        self.fail, self.said, self.delay = fail, [], delay
 
     async def synthesize(self, text):
         self.said.append(text)
+        if self.delay:
+            await asyncio.sleep(self.delay)
         if self.fail and self.fail in text:
             raise RuntimeError("tts down")
         return text.encode()
@@ -88,7 +91,7 @@ async def test_happy_path(settings):
 async def test_blocklisted_sentence_replaced_and_rest_stopped(settings):
     pipe, brain, sink, metrics, outs, player = make(settings, ["Fine.", "well shit.", "more."])
     rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="hi"))
-    assert rec.say == "Fine. DEFLECT" and "blocklist" in rec.safety
+    assert rec.say == "Fine. DEFLECT" and rec.safety == ["blocklist: well shit."]
     assert brain.seen == [True, False] and sink.played == [b"Fine.", b"DEFLECT"]
     await player.close()
 
@@ -96,7 +99,7 @@ async def test_blocklisted_sentence_replaced_and_rest_stopped(settings):
 async def test_unprompted_topic_replaced_prompted_kept(settings):
     pipe, brain, sink, metrics, outs, player = make(settings, ["The election is rigged."])
     rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="hi"))
-    assert rec.say == "DEFLECT" and rec.safety == ["topic:politics"]
+    assert rec.say == "DEFLECT" and rec.safety == ["topic:politics: The election is rigged."]
     rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="election?", topics=frozenset({"politics"})))
     assert rec.say == "The election is rigged." and rec.safety == []
     await player.close()
@@ -123,7 +126,7 @@ async def test_tts_failure_still_prints_and_continues(settings):
 
 
 async def test_over_budget_skips_comments_not_gifts(settings):
-    settings.session_token_cap = 10
+    settings.session_cost_cap_usd = 1e-9
     result = BrainResult(usage=Usage(0, 90, 10))
     pipe, brain, sink, metrics, outs, player = make(settings, ["Hi."], result)
     await pipe.handle(Event(Kind.DEV, text="first"))
@@ -164,7 +167,7 @@ async def test_log_write_failure_does_not_kill_loop(settings):
 
 
 async def test_self_harm_bypasses_over_budget_and_dev_label(settings):
-    settings.session_token_cap = 0
+    settings.session_cost_cap_usd = 0.0
     pipe, brain, sink, metrics, outs, player = make(settings, ["I care."])
     ev = Event(Kind.COMMENT, viewer="sad", text="kill myself", topics=frozenset({"self_harm"}))
     rec = await pipe.handle(ev)
@@ -180,4 +183,54 @@ async def test_deflection_sets_first_sentence_at(settings):
     pipe, brain, sink, metrics, outs, player = make(settings, [], BrainResult(error="timeout"))
     rec = await pipe.handle(Event(Kind.DEV, text="hi"))
     assert rec.first_sentence_at is not None and rec.stages()["llm"] is not None
+    await player.close()
+
+
+async def test_over_budget_quiet_skipped_silently_cost_cap(settings):
+    settings.session_cost_cap_usd = 1e-9
+    pipe, brain, sink, metrics, outs, player = make(settings, ["Hi."], BrainResult(usage=Usage(0, 90, 10)))
+    await pipe.handle(Event(Kind.DEV, text="first"))
+    outs.clear()
+    rec = await pipe.handle(Event(Kind.QUIET))
+    assert rec.error == "over_budget" and outs == []
+    rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="hello"))
+    assert rec.error == "over_budget" and any("skipped" in o for o in outs)
+    await player.close()
+
+
+async def test_many_tokens_do_not_trip_cost_cap(settings):
+    pipe, brain, sink, metrics, outs, player = make(settings, ["Hi."], BrainResult(usage=Usage(3000, 1000, 100)))
+    for _ in range(60):
+        await pipe.handle(Event(Kind.DEV, text="x"))
+    assert not pipe.over_budget()
+    await player.close()
+
+
+async def test_error_shown_and_auth_hint_printed_once(settings):
+    res = BrainResult(error="api: AuthenticationError: Error code: 401 - Insufficient Balance")
+    pipe, brain, sink, metrics, outs, player = make(settings, [], res)
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    await pipe.handle(Event(Kind.DEV, text="again"))
+    hint = "!!! DeepSeek rejected the request"
+    assert sum(o.startswith(hint) for o in outs) == 1
+    assert any("  ! error: api: AuthenticationError" in o for o in outs)
+    await player.close()
+
+
+async def test_non_auth_error_has_no_hint(settings):
+    pipe, brain, sink, metrics, outs, player = make(settings, [], BrainResult(error="timeout"))
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert not any("DeepSeek rejected" in o for o in outs)
+    await player.close()
+
+
+async def test_tts_timeout_recorded_and_loop_continues(settings):
+    settings.tts.timeout_s = 0.05
+    pipe, brain, sink, metrics, outs, player = make(settings, ["Slow."], tts=FakeTTS(delay=1.0))
+    rec = await asyncio.wait_for(pipe.handle(Event(Kind.DEV, text="hi")), 5)
+    assert rec.error and "Timeout" in rec.error
+    pipe._tts.delay = 0
+    brain.sentences = ["Fine."]
+    rec = await pipe.handle(Event(Kind.DEV, text="again"))
+    assert rec.error is None and sink.played == [b"Fine."]
     await player.close()

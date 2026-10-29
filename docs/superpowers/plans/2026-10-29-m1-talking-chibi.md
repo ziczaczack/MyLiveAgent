@@ -82,7 +82,7 @@ requirements.txt  pyproject.toml  .gitignore  .env.example
 **Interfaces:**
 - Produces:
   - `ConfigError(Exception)`, which carries a one-line user-facing message.
-  - `Settings` dataclass with sub-dataclasses `LLMSettings(base_url, model, api_key, max_tokens, first_token_timeout_s, history_turns, extra_body: dict, json_mode: bool)`, `Pricing(off_peak: Rates, peak: Rates, peak_windows_utc: list[tuple[int,int]])` with `Rates(cache_hit, cache_miss, output)`, `RouterSettings(stale_after_s, quiet_after_s, viewer_cooldown_s, max_ordinary_queued)`, `TTSSettings(voice, rate, pitch)`, `Lines(brain_lag: list[str], deflection: list[str])`. Top level also has `character_name`, `dev_name`, `session_token_cap`, `max_viewer_chars`, `max_viewer_name_chars`, `hotkey`, and `paths` (persona, blocklist, topics, mock_chat, logs_dir).
+  - `Settings` dataclass with sub-dataclasses `LLMSettings(base_url, model, api_key, max_tokens, first_token_timeout_s, history_turns, extra_body: dict, json_mode: bool)`, `Pricing(off_peak: Rates, peak: Rates, peak_windows_utc: list[tuple[int,int]])` with `Rates(cache_hit, cache_miss, output)`, `RouterSettings(stale_after_s, quiet_after_s, viewer_cooldown_s, max_ordinary_queued)`, `TTSSettings(voice, rate, pitch)`, `Lines(brain_lag: list[str], deflection: list[str])`. Top level also has `character_name`, `dev_name`, `session_cost_cap_usd` (float, $3.00), `max_viewer_chars`, `max_viewer_name_chars`, `hotkey`, and `paths` (persona, blocklist, topics, mock_chat, logs_dir).
   - `load_settings(path: Path, env: Mapping[str, str]) -> Settings`
   - `render_persona(path: Path, name: str, dev: str) -> str`
   - `class Kind(StrEnum): DEV, COMMENT, GIFT, FOLLOW, QUIET`
@@ -110,7 +110,7 @@ Expected: a line containing `en-SG-LunaNeural`. If it's missing, stop and report
 
 - [ ] **Step 3: Write `config/settings.yaml`**
 
-Fill in every value from Global Constraints. Set `character_name: "Chibi"` with the comment `# placeholder until viewers name it (video Day 3)`. Set `dev_name: "Lok"` with the comment `# the owner's on-stream name`. Set `session_token_cap: 200000` and `max_ordinary_queued: 5`. Add three or more `brain_lag` lines in persona voice (e.g. "Hold on, my brain is buffering. Blame the WiFi, or Lok."). Add three or more `deflection` lines (e.g. "Nope. Way too serious for a chibi. Next question."). Write `llm.api_key_env: DEEPSEEK_API_KEY`; the loader resolves this from `env`.
+Fill in every value from Global Constraints. Set `character_name: "Chibi"` with the comment `# placeholder until viewers name it (video Day 3)`. Set `dev_name: "Lok"` with the comment `# the owner's on-stream name`. Set `session_cost_cap_usd: 3.00` and `max_ordinary_queued: 5`. Add three or more `brain_lag` lines in persona voice (e.g. "Hold on, my brain is buffering. Blame the WiFi, or Lok."). Add three or more `deflection` lines (e.g. "Nope. Way too serious for a chibi. Next question."). Write `llm.api_key_env: DEEPSEEK_API_KEY`; the loader resolves this from `env`.
 
 - [ ] **Step 4: Write the failing tests**
 
@@ -540,7 +540,7 @@ Expected: you hear the sentence in a female Singapore-English voice.
 - Produces:
   - `class Pipeline(brain: Brain, safety: Safety, tts: TTS, player: Player, metrics: SessionMetrics, settings: Settings, out: Callable[[str], None] = print, rng: random.Random = random.Random(), clock=time.perf_counter)`
     - `async handle(ev: Event, routed_at: float | None = None) -> ReplyRecord`
-    - `over_budget() -> bool`, which is True when `metrics.total_tokens >= settings.session_token_cap`.
+    - `over_budget() -> bool`, which is True when `metrics.total_cost >= settings.session_cost_cap_usd`.
   - `ConsoleIngest(on_line: Callable[[Event | Command | ParseError], None])`. Its `run()` loops on `PromptSession().prompt_async("> ")` inside `patch_stdout()`, and EOF or KeyboardInterrupt produces `Command("quit")`.
   - In `main.py`:
     - `async run(settings: Settings, *, client=None, tts=None, sink=None) -> None`. The injection points are for tests.

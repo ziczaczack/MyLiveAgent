@@ -103,7 +103,7 @@ Output (each sentence, before TTS):
 - Streaming on, thinking/reasoning off (or lowest, whichever the API offers), `max_tokens` small (default 150), JSON output (`response_format` json_object if supported). Request usage stats on the stream to get cache-hit/miss token counts for costing.
 - Incremental parse: as tokens arrive, extract the `say` string value from the partial JSON and split it into sentences. Each complete sentence goes to safety(out) then TTS immediately, so speech starts before the reply finishes. `emotion` and `action` are read when the JSON completes. Invalid `emotion` falls back to `neutral`.
 - On timeout (default 6 s to first token) or API error: speak a canned "brain lag" line from config, and the character stays up.
-- Token budget: per-session token cap in config. Past it, only gifts and dev speech get replies, with `max_tokens` halved.
+- Cost budget: per-session cost cap in config ($3.00, `session_cost_cap_usd`). Past it, only gifts and dev speech get replies, with `max_tokens` halved.
 
 ### TTS and playback (`app/tts/base.py`, `app/tts/edge.py`, `app/audio.py`)
 
@@ -133,7 +133,7 @@ Per reply, one JSONL row: event kind and timestamps for received, routed, LLM fi
 
 ### Config (`config/settings.yaml`)
 
-Character name and dev name (fill `{{NAME}}`/`{{DEV}}`), LLM provider settings, pricing table, router thresholds, TTS voice, token cap, hotkey, canned lines (brain lag, deflection, idle). Character name is open (viewers name it on Day 3 of the video plan); use a placeholder until then.
+Character name and dev name (fill `{{NAME}}`/`{{DEV}}`), LLM provider settings, pricing table, router thresholds, TTS voice, session cost cap ($3.00), hotkey, canned lines (brain lag, deflection, idle). Character name is open (viewers name it on Day 3 of the video plan); use a placeholder until then.
 
 ### Failure behaviour
 
