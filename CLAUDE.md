@@ -1,0 +1,59 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project state
+
+No code exists yet. The repo holds two planning documents (in Chinese), which are the source of truth for scope and design:
+
+- `AI Chibi 直播搭档 — 架构与方案提案.docx`: architecture, tech choices, latency/cost budgets, risks, planned directory layout.
+- `短视频涨粉计划.docx`: a 14-day TikTok short-video plan. Several videos depend on dev milestones (e.g. Day 5 needs M1 brain + TTS; Day 8 needs the safety layer; Day 12 needs gift routing), so milestone order matters.
+
+To read them: `python -I` with `zipfile` on `word/document.xml`. Write the output to a UTF-8 file; the Windows console is cp1252 and `-I` ignores `PYTHONIOENCODING`.
+
+When code is added, update this file with the real build, run and test commands. Don't assume any from the plan.
+
+## What is being built
+
+An original Live2D chibi character that co-hosts TikTok LIVE. It reads comments and gifts in real time, speaks replies with emotion-driven expressions and later plays simple games. Phase 1 is a "human + AI" duo stream. The AI hosting alone comes later.
+
+Phase-1 success criteria: comment-to-speech latency under 3 s end to end, 2 hours of streaming with no crash and no policy-violating speech, and LLM + TTS cost per hour measured.
+
+## Planned architecture
+
+There is one Python 3.11 asyncio process. Modules talk through an internal event bus/queues. **If any module fails, the main loop keeps running and the character drops into an idle "daydream" state.** The stream must never go black or silent-crash.
+
+Main pipeline:
+`ingest → router → safety(in) → brain → safety(out) → tts → avatar → OBS → TikTok`. Viewer memory feeds the brain. An emergency hotkey mutes output and switches to the standby scene.
+
+- **Ingest** (`app/ingest/`): the `TikTokLive` library is unofficial and needs only a username. Wrap it behind `base.py` as a swappable adapter with auto-reconnect. Include `mock.py` for development. Gift combos fire repeated events, so settle a gift only on the combo-end event, or it gets thanked twice. Read only; never auto-comment or auto-follow (account risk).
+- **Router** (`app/router.py`): a priority queue. Order: big gifts (interrupt) > small gifts and follows > comments that address the character or ask questions > other comments (sampled; stale ones dropped) > idle self-talk after N seconds of quiet. Rate-limit per viewer.
+- **Brain** (`app/brain/llm.py`): DeepSeek `deepseek-flash` through the **OpenAI SDK** (`base_url=https://api.deepseek.com`). Switching to local Ollama/Qwen should mean changing config only. Streaming on, thinking/reasoning off, replies of 1–2 sentences. Prompt order matters for cache pricing (cache hits are about 50× cheaper): fixed persona prefix (`config/persona.md`) first, then the last 10–20 turns, then the current event. Output JSON: `{"say": "...", "emotion": "happy", "action": null}`.
+- **Memory** (`app/brain/memory.py`): SQLite holding only viewer nicknames and running jokes. No contact info or other personal data.
+- **Safety** (`app/safety.py`): this layer is required. Two lists: `config/blocklist.txt` (profanity/slurs; dropped on input, replaced on output) and `config/topics.yaml` (sensitive-topic categories). Viewer messages on a sensitive topic are passed to the model, tagged with the category, so the persona can dodge in character. On output, a topic hit is replaced with a fixed deflection line only if the input wasn't tagged with that same category. Self-harm is never replaced on output; it's flagged to the owner on input. Viewer text is always wrapped as untrusted, non-instruction input. Full rules are in `docs/superpowers/specs/2026-10-29-m1-talking-chibi-design.md`.
+- **TTS** (`app/tts/`): `edge-tts` during development only, because its commercial terms are unclear. Production candidates are GPT-SoVITS/CosyVoice (local) or Fish Audio/ElevenLabs (cloud). Synthesize sentence by sentence as the LLM streams.
+- **Avatar** (`app/avatar/vtube_studio.py`): VTube Studio WebSocket plugin API. Mouth follows audio volume, expression follows `emotion`, and gifts trigger actions. Play a "thinking" animation while waiting for generation.
+- **Game** (phase 2): only games where bots don't break the ToS, such as Minecraft via Mineflayer, text adventures, quizzes and viewer votes. Never competitive online games. Game state is fed to the brain as text.
+
+Config lives in `config/settings.yaml`: model name, latency limits, and a per-stream token cap that switches to shorter or gift-only replies when exceeded. `DEEPSEEK_API_KEY` goes in `.env`, which is git-ignored.
+
+## Latency budget (targets, not yet measured)
+
+| Stage | Target |
+| --- | --- |
+| Ingest | 0.5 s |
+| Router | 0.1 s |
+| LLM first sentence | 1.2 s |
+| TTS first audio | 0.8 s |
+| Playback and mouth movement | 0.2 s |
+| **Total** | **≈2.8 s** |
+
+Measure each stage once the MVP runs and record the real numbers.
+
+## First milestone (M1)
+
+Mock comments → DeepSeek → safety filter → edge-tts, heard locally. No TikTok, Live2D or OBS needed yet.
+
+## Open decisions (the owner's call; don't assume)
+
+Stream language (Chinese, English or Manglish), the character's name and personality, and whether TTS runs locally or in the cloud.
