@@ -53,9 +53,10 @@ async def test_hotkey_invokes_on_press_on_loop_thread():
             self.started = self.stopped = False
 
         running = True
+        _ready = True
 
-        def wait(self):
-            pass
+        def is_alive(self):
+            return True
 
         def start(self):
             self.started = True
@@ -122,10 +123,11 @@ async def test_run_warns_when_hook_not_running_after_start(capsys):
 
     class DeadHook:
         running = False
+        _ready = False
 
         def __init__(self, mapping): pass
         def start(self): pass
-        def wait(self): pass
+        def is_alive(self): return True
         def stop(self): pass
 
     class Ingest:
@@ -139,5 +141,70 @@ async def test_run_warns_when_hook_not_running_after_start(capsys):
     st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
     st.paths.logs_dir = Path(__import__("tempfile").mkdtemp())
     await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(),
-                               ingest_factory=Ingest, hotkeys_factory=DeadHook), 5)
+                               ingest_factory=Ingest, hotkeys_factory=DeadHook,
+                               hotkey_ready_timeout=0.05), 5)
     assert "(hotkey unavailable: keyboard hook could not be installed; use /mute)" in capsys.readouterr().out
+
+
+async def test_start_raises_within_deadline_when_never_ready():
+    import time
+
+    class Never:
+        running = False
+        _ready = False
+        stopped = False
+
+        def __init__(self, mapping): pass
+        def start(self): pass
+        def stop(self): Never.stopped = True
+
+    hk = MuteHotkey("x", lambda: None, asyncio.get_running_loop(), hotkeys_factory=Never, ready_timeout=0.05)
+    t0 = time.monotonic()
+    try:
+        hk.start()
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "could not be installed" in str(e)
+    assert time.monotonic() - t0 < 1.0
+    assert Never.stopped
+
+
+async def test_start_succeeds_when_listener_becomes_ready():
+    class Slow:
+        running = False
+        _ready = False
+
+        def __init__(self, mapping): pass
+
+        def start(self):
+            import threading
+            def go():
+                import time
+                time.sleep(0.05)
+                self.running = True
+                self._ready = True
+            threading.Thread(target=go).start()
+
+        def stop(self): pass
+
+    hk = MuteHotkey("x", lambda: None, asyncio.get_running_loop(), hotkeys_factory=Slow, ready_timeout=2.0)
+    hk.start()
+    assert hk._listener is not None
+
+
+async def test_start_gives_up_early_if_thread_dead():
+    class Dead:
+        running = False
+        _ready = False
+
+        def __init__(self, mapping): pass
+        def start(self): pass
+        def is_alive(self): return False
+        def stop(self): raise OSError("stop failed")
+
+    hk = MuteHotkey("x", lambda: None, asyncio.get_running_loop(), hotkeys_factory=Dead, ready_timeout=30)
+    try:
+        hk.start()
+        raise AssertionError("expected RuntimeError")
+    except RuntimeError as e:
+        assert "could not be installed" in str(e)

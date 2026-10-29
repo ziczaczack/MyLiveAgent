@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Callable
 
 
@@ -28,11 +29,13 @@ class MuteHotkey:
     """Global hotkey. The pynput thread only schedules on_press onto the event loop."""
 
     def __init__(self, combo: str, on_press: Callable[[], None],
-                 loop: asyncio.AbstractEventLoop, hotkeys_factory=None) -> None:
+                 loop: asyncio.AbstractEventLoop, hotkeys_factory=None,
+                 ready_timeout: float = 1.0) -> None:
         self._combo = combo
         self._on_press = on_press
         self._loop = loop
         self._factory = hotkeys_factory
+        self._ready_timeout = ready_timeout
         self._listener = None
 
     def start(self) -> None:
@@ -42,10 +45,17 @@ class MuteHotkey:
             factory = GlobalHotKeys
         listener = factory({self._combo: lambda: self._loop.call_soon_threadsafe(self._on_press)})
         listener.start()
-        listener.wait()  # start() only spawns the thread; hook-install errors surface here
-        if not listener.running:
-            listener.stop()
-            raise RuntimeError("keyboard hook could not be installed")
+        # start() only spawns a thread and pynput's wait() has no timeout, so poll briefly.
+        deadline = time.monotonic() + self._ready_timeout
+        while not (getattr(listener, "_ready", False) and listener.running):
+            alive = getattr(listener, "is_alive", lambda: True)()
+            if not alive or time.monotonic() >= deadline:
+                try:
+                    listener.stop()
+                except Exception:  # noqa: BLE001 - don't mask the real error
+                    pass
+                raise RuntimeError("keyboard hook could not be installed")
+            time.sleep(0.02)
         self._listener = listener
 
     def stop(self) -> None:

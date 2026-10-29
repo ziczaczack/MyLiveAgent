@@ -4,10 +4,11 @@ import pytest
 class _NoopHotKeys:
     """Stand-in for pynput GlobalHotKeys so tests never install a real OS-wide hook."""
     running = True
+    _ready = True
 
     def __init__(self, mapping): pass
     def start(self): pass
-    def wait(self): pass
+    def is_alive(self): return True
     def stop(self): pass
 
 

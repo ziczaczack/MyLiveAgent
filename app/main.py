@@ -29,7 +29,7 @@ HINT = "Type to talk as {dev}, or hold Alt+Space to dictate. /help for commands.
 
 
 async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_factory=ConsoleIngest,
-              hotkeys_factory=None) -> None:
+              hotkeys_factory=None, hotkey_ready_timeout: float = 1.0) -> None:
     persona = render_persona(settings.paths.persona, settings.character_name, settings.dev_name)
     try:
         safety = Safety.from_files(settings.paths.blocklist, settings.paths.topics,
@@ -83,7 +83,8 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
 
     print(f"{settings.character_name} | voice {settings.tts.voice} | model {settings.llm.model}")
     print(HINT.format(dev=settings.dev_name))
-    hotkey = MuteHotkey(settings.hotkey, mute.toggle, asyncio.get_running_loop(), hotkeys_factory)
+    hotkey = MuteHotkey(settings.hotkey, mute.toggle, asyncio.get_running_loop(), hotkeys_factory,
+                         hotkey_ready_timeout)
     try:
         hotkey.start()
     except Exception as e:  # noqa: BLE001 - no hotkey must not stop the stream
