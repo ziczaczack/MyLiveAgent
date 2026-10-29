@@ -1,7 +1,7 @@
 import asyncio
 import threading
 
-from app.hotkey import MuteController, MuteHotkey
+from app.hotkey import MuteController, MuteHotkey, combo_is_held
 
 
 class FakePlayer:
@@ -73,7 +73,8 @@ async def test_hotkey_invokes_on_press_on_loop_thread():
     def on_press():
         seen.set_result(threading.get_ident())
 
-    hk = MuteHotkey("<ctrl>+<alt>+m", on_press, loop, hotkeys_factory=FakeHotKeys)
+    hk = MuteHotkey("<ctrl>+<alt>+m", on_press, loop, hotkeys_factory=FakeHotKeys,
+                    keys_down=lambda combo: True)
     hk.start()
     tid = await asyncio.wait_for(seen, 2)
     created["thread"].join()
@@ -208,3 +209,48 @@ async def test_start_gives_up_early_if_thread_dead():
         raise AssertionError("expected RuntimeError")
     except RuntimeError as e:
         assert "could not be installed" in str(e)
+
+
+def _fire_once_factory(fired):
+    class FireOnce:
+        running = True
+        _ready = True
+
+        def __init__(self, mapping):
+            self._cb = list(mapping.values())[0]
+
+        def is_alive(self):
+            return True
+
+        def start(self):
+            self._cb()
+            fired.set()
+
+        def stop(self):
+            pass
+
+    return FireOnce
+
+
+async def test_hotkey_ignores_activation_when_keys_not_really_held():
+    # pynput can miss a key release and then fire on Ctrl alone; the physical check stops that.
+    calls = []
+    fired = threading.Event()
+    hk = MuteHotkey("<ctrl>+<alt>+m", lambda: calls.append(1), asyncio.get_running_loop(),
+                    hotkeys_factory=_fire_once_factory(fired), keys_down=lambda combo: False)
+    hk.start()
+    assert fired.is_set()
+    await asyncio.sleep(0.02)
+    assert calls == []
+
+
+def test_combo_is_held_checks_every_key():
+    down = {0x11, 0x12, ord("M")}
+    assert combo_is_held("<ctrl>+<alt>+m", key_state=lambda vk: vk in down)
+    down.discard(ord("M"))
+    assert not combo_is_held("<ctrl>+<alt>+m", key_state=lambda vk: vk in down)
+
+
+def test_combo_is_held_allows_unknown_keys():
+    # A key we can't map must not make the hotkey dead.
+    assert combo_is_held("<ctrl>+<f13>", key_state=lambda vk: vk == 0x11)
