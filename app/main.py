@@ -14,10 +14,11 @@ from dotenv import load_dotenv
 from app.audio import Player, SoundDeviceSink
 from app.brain.llm import Brain
 from app.config import ConfigError, Settings, load_settings, render_persona
-from app.events import Event
+from app.events import Event, Kind
 from app.ingest.console import Command, ConsoleIngest, ParseError
 from app.metrics import SessionMetrics
 from app.pipeline import Pipeline
+from app.router import Router
 from app.safety import Safety
 from app.tts.edge import EdgeTTS
 
@@ -42,7 +43,7 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
     metrics = SessionMetrics(settings.paths.logs_dir, time.perf_counter())
     pipeline = Pipeline(brain, safety, tts or EdgeTTS(settings.tts), player, metrics, settings)
 
-    queue: asyncio.Queue[Event] = asyncio.Queue()
+    router = Router(settings.router, settings.character_name)
     stop = asyncio.Event()
 
     def on_line(item) -> None:
@@ -52,11 +53,14 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
                 if ev is None:
                     print("(dropped: blocked words)")
                 else:
-                    queue.put_nowait(ev)
+                    if not router.submit(ev):
+                        print(f"(rate-limited: {ev.viewer})")
             elif isinstance(item, ParseError):
                 print(item.message)
             elif isinstance(item, Command) and item.name == "quit":
                 stop.set()
+            elif isinstance(item, Command) and item.name == "quiet":
+                router.submit(Event(Kind.QUIET))
             elif isinstance(item, Command):
                 print(f"/{item.name}: not available yet")
         except Exception as e:  # noqa: BLE001 - one bad line must not end the session
@@ -65,12 +69,14 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
 
     async def worker() -> None:
         while True:
-            ev = await queue.get()
+            ev = await router.get()
             try:
-                await pipeline.handle(ev)
+                await pipeline.handle(ev, routed_at=time.perf_counter())
             except Exception as e:  # noqa: BLE001 - the loop must never die
                 log.exception("reply failed")
                 print(f"(reply failed: {type(e).__name__}: {e})")
+            finally:
+                router.mark_handled()
 
     print(f"{settings.character_name} | voice {settings.tts.voice} | model {settings.llm.model}")
     print(HINT.format(dev=settings.dev_name))
