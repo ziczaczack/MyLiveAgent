@@ -15,6 +15,7 @@ from app.audio import Player, SoundDeviceSink
 from app.brain.llm import Brain
 from app.config import ConfigError, Settings, load_settings, render_persona
 from app.events import Event
+from app.hotkey import MuteController, MuteHotkey
 from app.ingest.console import Command, ConsoleIngest, ParseError
 from app.metrics import SessionMetrics
 from app.pipeline import Pipeline
@@ -27,7 +28,8 @@ log = logging.getLogger(__name__)
 HINT = "Type to talk as {dev}, or hold Alt+Space to dictate. /help for commands."
 
 
-async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_factory=ConsoleIngest) -> None:
+async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_factory=ConsoleIngest,
+              hotkeys_factory=None) -> None:
     persona = render_persona(settings.paths.persona, settings.character_name, settings.dev_name)
     try:
         safety = Safety.from_files(settings.paths.blocklist, settings.paths.topics,
@@ -45,6 +47,7 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
 
     router = Router(settings.router, settings.character_name)
     stop = asyncio.Event()
+    mute = MuteController(player, print)
 
     def on_line(item) -> None:
         try:
@@ -59,6 +62,8 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
                 print(item.message)
             elif isinstance(item, Command) and item.name == "quit":
                 stop.set()
+            elif isinstance(item, Command) and item.name in ("mute", "unmute"):
+                mute.set(item.name == "mute")
             elif isinstance(item, Command):
                 print(f"/{item.name}: not available yet")
         except Exception as e:  # noqa: BLE001 - one bad line must not end the session
@@ -78,11 +83,17 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
 
     print(f"{settings.character_name} | voice {settings.tts.voice} | model {settings.llm.model}")
     print(HINT.format(dev=settings.dev_name))
+    hotkey = MuteHotkey(settings.hotkey, mute.toggle, asyncio.get_running_loop(), hotkeys_factory)
+    try:
+        hotkey.start()
+    except Exception as e:  # noqa: BLE001 - no hotkey must not stop the stream
+        print(f"(hotkey unavailable: {e}; use /mute)")
     tasks = [asyncio.create_task(worker()), asyncio.create_task(ingest_factory(on_line).run())]
     tasks[1].add_done_callback(lambda _t: stop.set())
     try:
         await stop.wait()
     finally:
+        hotkey.stop()
         for t in tasks:
             t.cancel()
         results = await asyncio.gather(*tasks, return_exceptions=True)
