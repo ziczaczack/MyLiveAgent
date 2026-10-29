@@ -1,5 +1,6 @@
 import asyncio
 import inspect
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -15,16 +16,24 @@ class AudioSink(Protocol):
 
 
 class SoundDeviceSink:
-    async def play(self, mp3: bytes) -> None:
-        import miniaudio
-        import numpy as np
-        import sounddevice as sd
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._generation = 0
 
-        decoded = miniaudio.decode(mp3, output_format=miniaudio.SampleFormat.SIGNED16)
-        samples = np.frombuffer(decoded.samples, dtype=np.int16).reshape(-1, decoded.nchannels)
+    async def play(self, mp3: bytes) -> None:
+        generation = self._generation
 
         def _blocking() -> None:
-            sd.play(samples, decoded.sample_rate)
+            import miniaudio
+            import numpy as np
+            import sounddevice as sd
+
+            decoded = miniaudio.decode(mp3, output_format=miniaudio.SampleFormat.SIGNED16)
+            samples = np.frombuffer(decoded.samples, dtype=np.int16).reshape(-1, decoded.nchannels)
+            with self._lock:
+                if self._generation != generation:
+                    return  # stop() arrived after play() was called: do not start
+                sd.play(samples, decoded.sample_rate)
             sd.wait()
 
         await asyncio.to_thread(_blocking)
@@ -32,7 +41,9 @@ class SoundDeviceSink:
     def stop(self) -> None:
         import sounddevice as sd
 
-        sd.stop()
+        with self._lock:
+            self._generation += 1
+            sd.stop()
 
 
 @dataclass
@@ -76,6 +87,9 @@ class Player:
         if not on:
             return
         self.sink.stop()
+        self._drain()
+
+    def _drain(self) -> None:
         while True:
             try:
                 item = self._queue.get_nowait()
@@ -84,7 +98,12 @@ class Player:
             if inspect.iscoroutine(item):
                 item.close()
             elif isinstance(item, asyncio.Future):
-                item.cancel()
+                if not item.done():
+                    item.cancel()
+                elif not item.cancelled():
+                    exc = item.exception()  # consume so it is not "never retrieved"
+                    if exc is not None:
+                        self.errors.append(f"{type(exc).__name__}: {exc}")
             self._done()
 
     async def close(self) -> None:
@@ -92,6 +111,10 @@ class Player:
         if worker is not None:
             worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
+        self.sink.stop()
+        self._drain()
+        self._pending = 0
+        self._idle.set()
 
     def _done(self) -> None:
         self._pending -= 1
