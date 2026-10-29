@@ -1,0 +1,16 @@
+import pytest
+
+
+class _NoopHotKeys:
+    """Stand-in for pynput GlobalHotKeys so tests never install a real OS-wide hook."""
+    running = True
+
+    def __init__(self, mapping): pass
+    def start(self): pass
+    def wait(self): pass
+    def stop(self): pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_hotkeys(monkeypatch):
+    monkeypatch.setattr("pynput.keyboard.GlobalHotKeys", _NoopHotKeys)

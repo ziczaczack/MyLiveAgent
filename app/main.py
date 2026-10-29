@@ -93,7 +93,10 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
     try:
         await stop.wait()
     finally:
-        hotkey.stop()
+        try:
+            hotkey.stop()
+        except Exception:  # noqa: BLE001 - must not skip task cancellation / player.close
+            log.exception("hotkey stop failed")
         for t in tasks:
             t.cancel()
         results = await asyncio.gather(*tasks, return_exceptions=True)

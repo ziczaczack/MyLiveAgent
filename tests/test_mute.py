@@ -52,6 +52,11 @@ async def test_hotkey_invokes_on_press_on_loop_thread():
             created["mapping"] = mapping
             self.started = self.stopped = False
 
+        running = True
+
+        def wait(self):
+            pass
+
         def start(self):
             self.started = True
             t = threading.Thread(target=lambda: list(self.mapping_values())[0]())
@@ -107,3 +112,32 @@ async def test_run_warns_when_hotkey_fails_and_mute_command_works(capsys):
     out = capsys.readouterr().out
     assert "(hotkey unavailable: no display; use /mute)" in out
     assert out.index("[MUTED]") < out.index("[LIVE]")
+
+
+async def test_run_warns_when_hook_not_running_after_start(capsys):
+    from pathlib import Path
+
+    from app.config import load_settings
+    from app.main import run
+
+    class DeadHook:
+        running = False
+
+        def __init__(self, mapping): pass
+        def start(self): pass
+        def wait(self): pass
+        def stop(self): pass
+
+    class Ingest:
+        def __init__(self, on_line): pass
+        async def run(self): pass
+
+    class Sink:
+        async def play(self, b): pass
+        def stop(self): pass
+
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    st.paths.logs_dir = Path(__import__("tempfile").mkdtemp())
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(),
+                               ingest_factory=Ingest, hotkeys_factory=DeadHook), 5)
+    assert "(hotkey unavailable: keyboard hook could not be installed; use /mute)" in capsys.readouterr().out

@@ -42,6 +42,10 @@ class MuteHotkey:
             factory = GlobalHotKeys
         listener = factory({self._combo: lambda: self._loop.call_soon_threadsafe(self._on_press)})
         listener.start()
+        listener.wait()  # start() only spawns the thread; hook-install errors surface here
+        if not listener.running:
+            listener.stop()
+            raise RuntimeError("keyboard hook could not be installed")
         self._listener = listener
 
     def stop(self) -> None:
