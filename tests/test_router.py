@@ -124,3 +124,59 @@ async def test_mark_handled_defers_quiet():
     t0 = time.perf_counter()
     assert (await asyncio.wait_for(r.get(), 2)).kind == Kind.QUIET
     assert time.perf_counter() - t0 >= 0.14
+
+
+def test_stale_question_and_follow_dropped_but_gift_and_dev_kept():
+    r, c = make()
+    r.submit(comment("hi Mimi?", "a", t=0))
+    r.submit(Event(Kind.FOLLOW, viewer="b", received_at=0))
+    r.submit(Event(Kind.GIFT, viewer="g", gift="Rose", received_at=0))
+    r.submit(Event(Kind.DEV, text="yo", received_at=0))
+    c.t = 31
+    assert r.next_ready().viewer == "g"
+    assert r.next_ready().kind == Kind.DEV
+    assert r.next_ready() is None
+
+
+def test_fresh_question_kept_past_ordinary_staleness():
+    r, c = make()
+    r.submit(comment("hi Mimi?", "a", t=0))
+    c.t = 20
+    assert r.next_ready().viewer == "a"
+
+
+async def test_quiet_backs_off_when_nobody_answers():
+    r, c = make(quiet=10.0)
+    c.t = 10
+    assert (await r.get()).kind == Kind.QUIET
+    r.mark_handled()
+    c.t = 25  # 15 s later: under the doubled 20 s wait
+    assert r.next_ready() is None
+    task = asyncio.create_task(r.get())
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    c.t = 30
+    r.wake()
+    assert (await asyncio.wait_for(task, 1)).kind == Kind.QUIET
+
+
+async def test_real_event_resets_quiet_backoff():
+    r, c = make(quiet=10.0)
+    c.t = 10
+    assert (await r.get()).kind == Kind.QUIET
+    r.submit(Event(Kind.DEV, text="yo", received_at=10))
+    assert (await r.get()).kind == Kind.DEV
+    r.mark_handled()
+    c.t = 20
+    assert (await asyncio.wait_for(r.get(), 1)).kind == Kind.QUIET
+
+
+async def test_quiet_backoff_is_capped():
+    s = RouterSettings(stale_after_s=15, quiet_after_s=10, viewer_cooldown_s=1,
+                       max_ordinary_queued=5, quiet_max_s=25)
+    c = Clock()
+    r = Router(s, "Mimi", clock=c)
+    for t in (10, 30, 55, 80):  # waits 10, 20, then capped at 25
+        c.t = t
+        assert (await asyncio.wait_for(r.get(), 1)).kind == Kind.QUIET
+        r.mark_handled()

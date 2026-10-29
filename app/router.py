@@ -20,6 +20,7 @@ class Router:
         self._last_comment: dict[str, float] = {}
         self._start = clock()
         self._last_handled = self._start
+        self._quiet_streak = 0
         self._wake = asyncio.Event()
 
     def priority(self, ev: Event) -> int:
@@ -57,10 +58,23 @@ class Router:
         for prio, q in enumerate(self._queues):
             while q:
                 ev = q.popleft()
-                if prio == ORDINARY and self._clock() - ev.received_at > self._s.stale_after_s:
+                if self._is_stale(prio, ev):
                     continue
                 return ev
         return None
+
+    def _is_stale(self, prio: int, ev: Event) -> bool:
+        age = self._clock() - ev.received_at
+        if prio == ORDINARY:
+            return age > self._s.stale_after_s
+        # Gifts and dev speech are always answered; a late question or welcome sounds broken.
+        if ev.kind == Kind.FOLLOW or (ev.kind == Kind.COMMENT and prio == 3):
+            return age > self._s.priority_stale_after_s
+        return False
+
+    def _quiet_wait(self) -> float:
+        # Each unanswered quiet line doubles the wait, so a dead chat isn't nagged every 20 s.
+        return min(self._s.quiet_after_s * 2 ** self._quiet_streak, self._s.quiet_max_s)
 
     def mark_handled(self) -> None:
         self._last_handled = self._clock()
@@ -73,10 +87,12 @@ class Router:
             self._wake.clear()
             ev = self.next_ready()
             if ev is not None:
+                self._quiet_streak = 0
                 return ev
-            remaining = max(self._start, self._last_handled) + self._s.quiet_after_s - self._clock()
+            remaining = max(self._start, self._last_handled) + self._quiet_wait() - self._clock()
             if remaining <= 0:
                 self._last_handled = self._clock()  # next QUIET only after another full quiet period
+                self._quiet_streak += 1
                 return Event(Kind.QUIET, received_at=self._clock())
             try:
                 await asyncio.wait_for(self._wake.wait(), remaining)

@@ -47,6 +47,8 @@ class RouterSettings:
     quiet_after_s: float
     viewer_cooldown_s: float
     max_ordinary_queued: int
+    priority_stale_after_s: float = 30.0  # questions/mentions and follows
+    quiet_max_s: float = 180.0  # cap for the quiet-chat backoff
 
 
 @dataclass
