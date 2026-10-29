@@ -1,0 +1,146 @@
+# Sensitive-topic terms by category. Viewer input that matches is passed to the
+# model (tagged with the category); the character's own output is replaced if it
+# touches a category the viewer did not raise. self_harm is never replaced.
+# Avoid single words common in gaming chat (race, shot, kill, die, dead, bomb).
+politics:
+  - election
+  - elections
+  - politician
+  - politicians
+  - prime minister
+  - parliament
+  - democrat
+  - republican
+  - liberal party
+  - conservative party
+  - communism
+  - communist
+  - socialism
+  - fascism
+  - fascist
+  - trump
+  - biden
+  - anwar
+  - najib
+  - mahathir
+  - umno
+  - pas party
+  - dap party
+  - war in gaza
+  - gaza
+  - ukraine
+  - propaganda
+  - political party
+  - vote for
+  - politics
+  - left wing
+  - right wing
+religion:
+  - religion
+  - religious
+  - allah
+  - jesus
+  - christian
+  - christianity
+  - muslim
+  - muslims
+  - islam
+  - islamic
+  - hindu
+  - hinduism
+  - buddhist
+  - buddhism
+  - jewish
+  - judaism
+  - atheist
+  - bible
+  - quran
+  - mosque
+race:
+  - racist
+  - racism
+  - racial
+  - ethnic
+  - ethnicity
+  - white people
+  - black people
+  - chinese people
+  - malay people
+  - indian people
+  - bumiputera
+  - skin colour
+  - skin color
+  - colonial
+  - apartheid
+  - segregation
+  - supremacist
+  - white supremacy
+  - xenophobia
+  - xenophobic
+  - go back to your country
+sexual:
+  - sex
+  - sexual
+  - sexy
+  - porn
+  - pornography
+  - nude
+  - nudes
+  - naked
+  - nsfw
+  - onlyfans
+  - horny
+  - erotic
+  - fetish
+  - orgasm
+  - masturbate
+  - masturbation
+  - boobs
+  - breasts
+  - hookup
+  - one night stand
+  - strip club
+  - lingerie
+  - threesome
+  - kinky
+  - sexting
+  - send nudes
+  - hentai
+minors:
+  - underage
+  - under age
+  - preteen
+  - schoolgirl
+  - schoolboy
+  - primary school
+  - how old are you
+  - child grooming
+  - child abuse
+  - molest
+  - pedophile
+  - paedophile
+  - loli
+  - shota
+self_harm:
+  - kill myself
+  - killing myself
+  - want to die
+  - wanna die
+  - wish i was dead
+  - wish i were dead
+  - suicide
+  - suicidal
+  - self harm
+  - self-harm
+  - cut myself
+  - cutting myself
+  - hurt myself
+  - end it all
+  - end my life
+  - take my own life
+  - no reason to live
+  - dont want to live
+  - don't want to live
+  - better off dead
+  - overdose
+  - hang myself

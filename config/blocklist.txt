@@ -1,0 +1,135 @@
+# Profanity and slurs that would get a TikTok stream restricted.
+# One term per line. Lines starting with # are comments. Matching is
+# case-insensitive, whole-word, after leetspeak/spacing normalisation.
+# Mild words the roast-comic persona may say (damn, hell, sucks, stupid) are deliberately NOT here.
+
+# --- English profanity ---
+fuck
+fucks
+fucked
+fucker
+fuckers
+fucking
+fuckface
+motherfucker
+motherfucking
+mofo
+shit
+shits
+shitty
+shithead
+shitface
+bullshit
+horseshit
+bitch
+bitches
+bitchy
+bastard
+bastards
+asshole
+assholes
+arsehole
+dumbass
+jackass
+fatass
+dickhead
+dickheads
+cunt
+cunts
+pussy
+cocksucker
+blowjob
+handjob
+wanker
+wankers
+twat
+bollocks
+whore
+whores
+slut
+sluts
+slutty
+skank
+jerkoff
+jizz
+dipshit
+douchebag
+prick
+bellend
+tosser
+piss off
+screw you
+
+# --- English slurs ---
+nigger
+niggers
+nigga
+niggas
+faggot
+faggots
+fag
+fags
+retard
+retards
+retarded
+tranny
+trannies
+chink
+chinks
+ching chong
+gook
+gooks
+spic
+spics
+kike
+kikes
+wetback
+wetbacks
+paki
+darkie
+dyke
+dykes
+towelhead
+raghead
+beaner
+coolie
+
+# --- Malay / Manglish / Hokkien / Cantonese profanity ---
+puki
+pukimak
+puki mak
+pukima
+cibai
+chibai
+chee bai
+kanasai
+knn
+ccb
+lanjiao
+lan jiao
+babi
+sial
+celaka
+bangsat
+keparat
+kimak
+haramjadah
+haram jadah
+lahanat
+jalang
+sundal
+pelacur
+pundek
+pantat
+burit
+butoh
+cipap
+pepek
+tetek
+tahi
+anjing
+bahlol
+bapok
+pondan
+keling
+lancau
