@@ -1,0 +1,54 @@
+character_name: "Chibi"   # placeholder until viewers name it (video Day 3)
+dev_name: "Lok"           # the owner's on-stream name
+session_token_cap: 200000
+max_viewer_chars: 200
+max_viewer_name_chars: 32
+hotkey: "<ctrl>+<alt>+m"  # Ctrl+Alt+M mutes; never bind Alt+Space
+
+llm:
+  base_url: https://api.deepseek.com
+  model: deepseek-flash
+  api_key_env: DEEPSEEK_API_KEY
+  max_tokens: 150
+  first_token_timeout_s: 6
+  history_turns: 16
+  json_mode: true
+  extra_body:
+    thinking:
+      type: disabled
+
+pricing:   # USD per 1M tokens
+  off_peak: {cache_hit: 0.003, cache_miss: 0.15, output: 0.60}
+  peak: {cache_hit: 0.006, cache_miss: 0.30, output: 1.20}
+  peak_windows_utc: [[1, 4], [6, 10]]   # Mon-Fri, [start, end) hours
+
+router:
+  stale_after_s: 15
+  quiet_after_s: 20
+  viewer_cooldown_s: 10
+  max_ordinary_queued: 5
+
+tts:
+  voice: en-SG-LunaNeural
+  rate: "+0%"
+  pitch: "+0Hz"
+
+mock:
+  interval_s: [2.0, 6.0]
+
+paths:
+  persona: config/persona.md
+  blocklist: config/blocklist.txt
+  topics: config/topics.yaml
+  mock_chat: config/mock_chat.yaml
+  logs_dir: logs
+
+lines:
+  brain_lag:
+    - "Hold on, my brain is buffering. Blame the WiFi, or Lok."
+    - "Give me a sec, I'm thinking so hard the server is sweating."
+    - "Aiyo, lag. That one is definitely Lok's code, not me."
+  deflection:
+    - "Nope. Way too serious for a chibi. Next question."
+    - "Politics is above my pay grade. My pay grade is zero."
+    - "I could answer that, but I'd rather roast Lok. Next."

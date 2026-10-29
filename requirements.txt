@@ -1,0 +1,11 @@
+openai
+edge-tts
+miniaudio
+sounddevice
+numpy
+prompt_toolkit
+pynput
+PyYAML
+python-dotenv
+pytest
+pytest-asyncio
