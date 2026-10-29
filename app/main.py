@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from app.audio import Player, SoundDeviceSink
 from app.brain.llm import Brain
 from app.config import ConfigError, Settings, load_settings, render_persona
-from app.events import Event, Kind
+from app.events import Event
 from app.ingest.console import Command, ConsoleIngest, ParseError
 from app.metrics import SessionMetrics
 from app.pipeline import Pipeline
@@ -59,8 +59,6 @@ async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_fa
                 print(item.message)
             elif isinstance(item, Command) and item.name == "quit":
                 stop.set()
-            elif isinstance(item, Command) and item.name == "quiet":
-                router.submit(Event(Kind.QUIET))
             elif isinstance(item, Command):
                 print(f"/{item.name}: not available yet")
         except Exception as e:  # noqa: BLE001 - one bad line must not end the session
