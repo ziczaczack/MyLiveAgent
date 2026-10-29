@@ -161,3 +161,23 @@ async def test_log_write_failure_does_not_kill_loop(settings):
     rec = await pipe.handle(Event(Kind.DEV, text="hi"))
     assert any("log write failed" in o for o in outs) and rec.say == "A."
     await player.close()
+
+
+async def test_self_harm_bypasses_over_budget_and_dev_label(settings):
+    settings.session_token_cap = 0
+    pipe, brain, sink, metrics, outs, player = make(settings, ["I care."])
+    ev = Event(Kind.COMMENT, viewer="sad", text="kill myself", topics=frozenset({"self_harm"}))
+    rec = await pipe.handle(ev)
+    assert any(o.startswith("!!! SELF-HARM FLAG from sad") for o in outs)
+    assert rec.error is None and sink.played == [b"I care."]
+    assert brain.max_tokens == [settings.llm.max_tokens // 2]
+    await pipe.handle(Event(Kind.DEV, text="kill myself", topics=frozenset({"self_harm"})))
+    assert any(o.startswith("!!! SELF-HARM FLAG from dev:") for o in outs)
+    await player.close()
+
+
+async def test_deflection_sets_first_sentence_at(settings):
+    pipe, brain, sink, metrics, outs, player = make(settings, [], BrainResult(error="timeout"))
+    rec = await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert rec.first_sentence_at is not None and rec.stages()["llm"] is not None
+    await player.close()

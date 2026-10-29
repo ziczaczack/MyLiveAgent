@@ -42,7 +42,9 @@ class Pipeline:
     def over_budget(self) -> bool:
         return self._metrics.total_tokens >= self._s.session_token_cap
 
-    def _speak(self, text: str) -> None:
+    def _speak(self, text: str, rec: ReplyRecord) -> None:
+        if rec.first_sentence_at is None:
+            rec.first_sentence_at = self._clock()
         self._player.enqueue(asyncio.create_task(self._tts.synthesize(text)))
 
     async def handle(self, ev: Event, routed_at: float | None = None) -> ReplyRecord:
@@ -55,15 +57,16 @@ class Pipeline:
                           say="", emotion="neutral", action=None)
 
         over = self.over_budget()
-        if over and ev.kind not in (Kind.GIFT, Kind.DEV):
+        flagged = "self_harm" in ev.topics
+        if flagged:
+            self._out(f"!!! SELF-HARM FLAG from {ev.viewer or 'dev'}: {ev.text}")
+        if over and not flagged and ev.kind not in (Kind.GIFT, Kind.DEV):
             rec.error = "over_budget"
             rec.done_at = self._clock()
             self._out("  (skipped: session token cap reached)")
             return rec
         event_text = describe_event(ev, self._s.character_name, self._s.dev_name,
                                     self._s.max_viewer_name_chars)
-        if "self_harm" in ev.topics:
-            self._out(f"!!! SELF-HARM FLAG from {ev.viewer}: {ev.text}")
 
         self._player.start()
         spoken: list[str] = []
@@ -73,12 +76,10 @@ class Pipeline:
             if not verdict.ok:
                 rec.safety.append(verdict.reason or "blocked")
                 line = self._rng.choice(self._s.lines.deflection)
-                self._speak(line)
+                self._speak(line, rec)
                 spoken.append(line)
                 return False
-            if rec.first_sentence_at is None:
-                rec.first_sentence_at = self._clock()
-            self._speak(s)
+            self._speak(s, rec)
             spoken.append(s)
             return True
 
@@ -89,7 +90,7 @@ class Pipeline:
             rec.emotion, rec.action = result.emotion, result.action
         if not spoken:
             line = self._rng.choice(self._s.lines.brain_lag)
-            self._speak(line)
+            self._speak(line, rec)
             spoken.append(line)
             rec.error = rec.error or "no_say"
 
