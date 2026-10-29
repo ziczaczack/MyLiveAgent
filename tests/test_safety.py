@@ -56,3 +56,33 @@ def test_shipped_blocklist_spares_roast_words_and_numbers():
     for text in ["damn that sucks", "what the hell, so stupid", "score 455 to 300", "gg I won the race", "he got a headshot, killed"]:
         assert s.check_input(C(text)) is not None, text
     assert s.check_input(C("what a b1tch")) is None
+
+
+REAL = Safety.from_files(Path("config/blocklist.txt"), Path("config/topics.yaml"), 200, 32)
+
+
+def test_obfuscations_blocked():
+    for t in ["f*ck", "f**k", "sh!t", "b!tch", "fuuuck", "fuckin", "fck", "fuk", "phuck", "fvck",
+              "shithole", "ｆｕｃｋ", "fu​ck", "shïs", "shït", "kys", "kill yourself"]:
+        assert REAL.check_input(C(t)) is None, t
+    assert S.check_input(C("f*ck")) is None and S.check_input(C("fuuuck")) is None
+
+
+def test_clean_text_still_passes():
+    for t in ["first class assets", "455", "killed", "headshot", "damn", "best sial", "wow!", "great * game"]:
+        assert REAL.check_input(C(t)) is not None, t
+
+
+def test_viewer_name_excluded_from_topic_check():
+    assert REAL.check_output("Thanks Christian for the rose!", frozenset(), viewer="Christian").ok
+    assert not REAL.check_output("Thanks Christian for the rose!", frozenset()).ok
+
+
+def test_ambiguous_topic_terms_removed():
+    for t in ["vote for your favourite skin", "jesus that was close", "chicken breasts", "he is naked snake"]:
+        assert REAL.check_output(t, frozenset()).ok, t
+
+
+def test_self_harm_shorthand_tagged():
+    assert REAL.check_input(C("i wanna kms")).topics == {"self_harm"}
+    assert REAL.check_input(C("donald trump")).topics == {"politics"}

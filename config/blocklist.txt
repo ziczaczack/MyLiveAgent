@@ -108,7 +108,6 @@ ccb
 lanjiao
 lan jiao
 babi
-sial
 celaka
 bangsat
 keparat
@@ -133,3 +132,21 @@ bapok
 pondan
 keling
 lancau
+
+# --- Obfuscated / variant spellings and harassment shorthand ---
+fuckin
+fck
+fk
+fuk
+fvck
+phuck
+fcking
+shithole
+shitshow
+fuckoff
+motherfuckers
+bitchass
+kill yourself
+kys
+go die
+# babi / sial are owner's call: sial is a mild intensifier in Manglish ("best sial"), so it is left off.

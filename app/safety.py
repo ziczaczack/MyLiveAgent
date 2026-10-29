@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,15 +21,42 @@ class OutputVerdict:
     reason: str | None = None
 
 
-def _spaced(s: str) -> str:
-    s = s.lower().translate(_LEET)
+def _clean(s: str, stars: str) -> str:
+    """Strip invisible chars, fold width/accents, resolve in-word ! | and *."""
+    s = "".join(c for c in s if unicodedata.category(c) != "Cf")
+    s = unicodedata.normalize("NFKD", unicodedata.normalize("NFKC", s))
+    s = "".join(c for c in s if not unicodedata.combining(c)).lower()
+    s = re.sub(r"(?<=[a-z0-9])[!|](?=[a-z0-9])", "i", s)
+    if stars == "drop":
+        s = re.sub(r"(?<=[a-z0-9])\*+(?=[a-z0-9])", "", s)
+    return s
+
+
+def _spaced(s: str, stars: str = "space") -> str:
+    s = _clean(s, stars).translate(_LEET)
     s = re.sub(r"[\W_]+", " ", s)
     return " ".join(s.split())
 
 
+def _join_singles(s: str) -> str:
+    return " ".join(_SINGLE_RUN.sub(lambda m: m.group().replace(" ", ""), s).split())
+
+
 def normalize(s: str) -> str:
     """Lowercase, de-leet, strip punctuation, and join runs of single letters."""
-    return " ".join(_SINGLE_RUN.sub(lambda m: m.group().replace(" ", ""), _spaced(s)).split())
+    return _join_singles(_spaced(s))
+
+
+def _forms(s: str) -> set[str]:
+    """Every normalized reading of `s` that a term is matched against."""
+    out: set[str] = set()
+    for stars in ("space", "drop"):
+        spaced = _spaced(s, stars)
+        for f in (spaced, _join_singles(spaced)):
+            out.add(f)
+            out.add(re.sub(r"(.)\1{2,}", r"\1", f))
+            out.add(re.sub(r"(.)\1{2,}", r"\1\1", f))
+    return out
 
 
 def _compile(term: str) -> re.Pattern[str] | None:
@@ -60,12 +88,18 @@ class Safety:
         return cls(block, {c: list(ts or []) for c, ts in topics.items()}, max_viewer_chars, max_name_chars)
 
     def _blocked(self, s: str) -> bool:
-        # Check both the letter-joined and plain spacing so "a ass" is not hidden by joining.
-        forms = {normalize(s), _spaced(s)}
-        return any(p.search(f) for p in self._block for f in forms)
+        return any(p.search(f) for f in _forms(s) for p in self._block)
 
-    def _topics_in(self, s: str) -> frozenset[str]:
-        forms = {normalize(s), _spaced(s)}
+    def _topics_in(self, s: str, viewer: str = "") -> frozenset[str]:
+        forms = _forms(s)
+        names = [re.compile(rf"\b{re.escape(t)}\b") for t in _spaced(viewer).split()]
+        if names:
+            cleaned = set()
+            for f in forms:
+                for n in names:
+                    f = n.sub(" ", f)
+                cleaned.add(f)
+            forms = cleaned
         return frozenset(c for c, ps in self._topic.items() if any(p.search(f) for p in ps for f in forms))
 
     def check_input(self, ev: Event) -> Event | None:
@@ -81,10 +115,10 @@ class Safety:
             viewer=ev.viewer[: self.max_name_chars],
         )
 
-    def check_output(self, sentence: str, input_topics: frozenset[str]) -> OutputVerdict:
+    def check_output(self, sentence: str, input_topics: frozenset[str], viewer: str = "") -> OutputVerdict:
         if self._blocked(sentence):
             return OutputVerdict(False, "blocklist")
-        for cat in sorted(self._topics_in(sentence)):
+        for cat in sorted(self._topics_in(sentence, viewer)):
             if cat != "self_harm" and cat not in input_topics:
                 return OutputVerdict(False, f"topic:{cat}")
         return OutputVerdict(True, None)
