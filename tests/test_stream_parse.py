@@ -45,3 +45,30 @@ def test_parse_reply_json():
     assert parse_reply_json('{"say":"x","emotion":"furious","action":"dance"}') == ("x", "neutral", None)
     assert parse_reply_json('```json\n{"say":"x","emotion":"smug","action":"facepalm"}\n```') == ("x", "smug", "facepalm")
     assert parse_reply_json("not json")[0] is None
+
+def test_parse_reply_json_unhashable_fields():
+    assert parse_reply_json('{"say":"x","emotion":["happy"],"action":{}}') == ("x", "neutral", None)
+    assert parse_reply_json('{"say":"x","emotion":{"a":1},"action":["celebrate"]}') == ("x", "neutral", None)
+
+BS = chr(92)
+HI, LO = BS + "ud83d", BS + "ude00"
+FFFD = "\N{REPLACEMENT CHARACTER}"
+def say_json(body): return '{"say":"' + body + '"}'
+
+def test_surrogate_pair_one_chunk():
+    out, done = feed_all([say_json("hi " + HI + LO + "!")])
+    assert out == "hi \U0001F600!" and done
+    out.encode("utf-8")
+
+def test_surrogate_pair_split_across_chunks():
+    text = say_json("a" + HI + LO + "b")
+    i = text.index(HI)
+    for cut in range(1, 12):
+        out, done = feed_all([text[:i + cut], text[i + cut:]])
+        assert out == "a\U0001F600b" and done, cut
+
+def test_lone_surrogates_become_replacement_char():
+    assert feed_all([say_json("a" + HI + "z")])[0] == "a" + FFFD + "z"
+    assert feed_all([say_json("a" + HI)])[0] == "a" + FFFD
+    assert feed_all([say_json("a" + LO + "z")])[0] == "a" + FFFD + "z"
+    assert feed_all([say_json("a" + HI + BS + "nz")])[0] == "a" + FFFD + " z"

@@ -10,6 +10,16 @@ _SAY_OPEN = re.compile(r'"say"\s*:\s*"')
 _SIMPLE_ESCAPES = {"n": " ", "t": " ", "r": " ", "b": " ", "f": " ",
                    '"': '"', "\\": "\\", "/": "/"}
 _HEX = set("0123456789abcdefABCDEF")
+_LOW_ESCAPE = re.compile(r"\\u[dD][c-fC-F][0-9a-fA-F]{2}")
+_REPLACEMENT = "\N{REPLACEMENT CHARACTER}"
+
+
+def _could_be_u_escape(s: str) -> bool:
+    """True if s (shorter than 6 chars) is a prefix of some backslash-u-XXXX escape."""
+    return all(
+        (c == "\\" if k == 0 else c == "u" if k == 1 else c in _HEX)
+        for k, c in enumerate(s)
+    )
 
 
 class SayExtractor:
@@ -54,7 +64,20 @@ class SayExtractor:
                 if len(hex4) < 4:
                     break  # partial \uXXXX; resume next feed
                 if all(c in _HEX for c in hex4):
-                    out.append(chr(int(hex4, 16)))
+                    cp = int(hex4, 16)
+                    if 0xD800 <= cp <= 0xDBFF:  # high surrogate: needs a low one
+                        nxt = buf[i + 6:i + 12]
+                        if len(nxt) < 6 and _could_be_u_escape(nxt):
+                            break  # pair may be split across chunks; resume next feed
+                        if _LOW_ESCAPE.fullmatch(nxt):
+                            low = int(nxt[2:], 16)
+                            out.append(chr(0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00)))
+                            i += 12
+                        else:
+                            out.append(_REPLACEMENT)
+                            i += 6
+                        continue
+                    out.append(_REPLACEMENT if 0xDC00 <= cp <= 0xDFFF else chr(cp))
                     i += 6
                 else:
                     i += 2  # malformed escape: drop the "\u", keep going
@@ -124,9 +147,9 @@ def parse_reply_json(full_text: str) -> tuple[str | None, str, str | None]:
     say = data.get("say")
     say = say.strip() if isinstance(say, str) and say.strip() else None
     emotion = data.get("emotion")
-    if emotion not in EMOTIONS:
+    if not isinstance(emotion, str) or emotion not in EMOTIONS:
         emotion = "neutral"
     action = data.get("action")
-    if action not in ACTIONS:
+    if not isinstance(action, str) or action not in ACTIONS:
         action = None
     return say, emotion, action
