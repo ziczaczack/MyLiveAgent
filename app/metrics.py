@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.config import Pricing
@@ -34,6 +34,7 @@ class Usage:
 
 
 def is_peak(at: datetime, windows: list[tuple[int, int]]) -> bool:
+    at = at.astimezone(timezone.utc)
     if at.weekday() >= 5:
         return False
     return any(start <= at.hour < end for start, end in windows)

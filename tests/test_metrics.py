@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -85,3 +85,9 @@ def test_percentiles_ignore_none(tmp_path):
     assert p["llm"] == (pytest.approx(0.9), pytest.approx(0.9))
     assert p["tts"] == (pytest.approx(0.7), pytest.approx(0.7))
     assert "p50" in m.summary() or "llm" in m.summary()
+
+
+def test_is_peak_normalises_to_utc():
+    tz8 = timezone(timedelta(hours=8))
+    assert is_peak(datetime(2026, 11, 2, 9, tzinfo=tz8), P.peak_windows_utc) is True    # 01:00 UTC Mon
+    assert is_peak(datetime(2026, 11, 2, 8, tzinfo=tz8), P.peak_windows_utc) is False   # Sun 00:00 UTC
