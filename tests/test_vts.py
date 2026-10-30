@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from app.avatar.vts import VTSClient, VTSError
+from app.avatar.vts import VTSAuthDenied, VTSClient, VTSError
 
 DISCONNECT = object()
 
@@ -114,9 +114,26 @@ async def test_rejected_token_requests_new_one(tmp_path):
 
 async def test_denied_popup_raises(tmp_path):
     t, c = make(tmp_path, {"AuthenticationToken": {"errorID": 50, "message": "denied"}})
-    with pytest.raises(VTSError):
+    with pytest.raises(VTSAuthDenied):
         await c.authenticate()
     assert not (tmp_path / "cfg" / ".vts_token").exists()
+    await c.close()
+
+
+async def test_unanswered_popup_raises_denied(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.avatar.vts.TOKEN_WAIT", 0.05)
+    t, c = make(tmp_path, {"AuthenticationToken": None})
+    with pytest.raises(VTSAuthDenied):
+        await c.authenticate()
+    assert not (tmp_path / "cfg" / ".vts_token").exists()
+    await c.close()
+
+
+async def test_other_token_error_is_not_denied(tmp_path):
+    t, c = make(tmp_path, {"AuthenticationToken": {"errorID": 1, "message": "busy"}})
+    with pytest.raises(VTSError) as e:
+        await c.authenticate()
+    assert not isinstance(e.value, VTSAuthDenied)
     await c.close()
 
 

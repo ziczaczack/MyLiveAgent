@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 import numpy as np
 
 from app.avatar.lipsync import envelope
-from app.avatar.vts import Transport, VTSClient, VTSError, aiohttp_connect
+from app.avatar.vts import Transport, VTSAuthDenied, VTSClient, VTSError, aiohttp_connect
 from app.config import AvatarSettings
 
 log = logging.getLogger(__name__)
@@ -25,6 +25,8 @@ RESET_TIMEOUT_S = 2.0
 HEARTBEAT_S = 2.0  # idle ping so a closed VTube Studio is noticed between replies
 SELF_TEST_HOLD_S = 1.0
 _EXPECTED = (OSError, ConnectionError, VTSError, asyncio.TimeoutError)
+DENIED_LINE = "avatar: plugin not allowed in VTube Studio; type /avatar to ask again"
+_MISS_HINT = "check config or type /avatar after switching models"
 
 
 def _never_raises(fn):
@@ -63,6 +65,10 @@ class VTSAvatar:
         self._hotkey_names: set[str] = set()  # lower-cased
         self._hotkey_ids: set[str] = set()
         self._warned: set[str] = set()
+        # The owner denied (or ignored) the Allow popup: stop asking until /avatar re-arms.
+        self._parked = False
+        self._rearm = asyncio.Event()
+        self._allow_noticed = False  # the "click Allow" notice prints once per arm
         # reply state
         self._thinking = False
         self._accept_audio = False  # True between play_started and play_ended/muted
@@ -121,11 +127,23 @@ class VTSAvatar:
                 self._commands.append(("ExpressionActivation", {"expressionFile": file, "active": True}))
                 self._expression = file
             else:
-                self._warn_once(f"avatar: expression {file} (emotion {emotion}) is not in the loaded model; skipped")
+                self._warn_once(f"avatar: model has no expression '{file}' (emotion {emotion}); {_MISS_HINT}",
+                                console=True)
         if action:
             self._trigger(action)
 
+    @_never_raises
+    def retry(self) -> None:
+        """Ask VTube Studio again after the owner denied or ignored the Allow popup; no-op otherwise."""
+        if self._parked:
+            self._parked = False
+            self._allow_noticed = False
+            self._shown = None
+            self._rearm.set()
+
     def status(self) -> str:
+        if self._parked:
+            return f"avatar: not allowed in VTube Studio ({self._s.url})"
         return f"avatar: {'connected' if self._connected else 'not connected'} ({self._s.url})"
 
     # --- lifecycle ---
@@ -166,12 +184,17 @@ class VTSAvatar:
             await asyncio.sleep(SELF_TEST_HOLD_S)
             self._thinking = False
             for emotion, file in self._s.expressions.items():
-                missing = "" if file in self._model_expressions else " (not in the loaded model)"
-                out(f"avatar: {emotion}{missing}")
+                if file not in self._model_expressions:
+                    out(f"avatar: {emotion} (not in the loaded model)")
+                    continue
+                out(f"avatar: {emotion}")
                 self.react(emotion, None)
                 await asyncio.sleep(SELF_TEST_HOLD_S)
             self._expression_off()
-            for action in self._s.actions:
+            for action, hotkey in self._s.actions.items():
+                if not self._has_hotkey(hotkey):
+                    out(f"avatar: {action} (not in the loaded model)")
+                    continue
                 out(f"avatar: {action}")
                 self._trigger(action)
                 await asyncio.sleep(SELF_TEST_HOLD_S)
@@ -206,15 +229,21 @@ class VTSAvatar:
         hotkey = self._s.actions.get(action)
         if not hotkey or not self._connected:
             return
-        if hotkey in self._hotkey_ids or hotkey.lower() in self._hotkey_names:
+        if self._has_hotkey(hotkey):
             self._commands.append(("HotkeyTrigger", {"hotkeyID": hotkey}))
         else:
-            self._warn_once(f"avatar: hotkey {hotkey} (action {action}) is not in the loaded model; skipped")
+            self._warn_once(f"avatar: model has no hotkey '{hotkey}' (action {action}); {_MISS_HINT}",
+                            console=True)
 
-    def _warn_once(self, msg: str) -> None:
+    def _has_hotkey(self, hotkey: str) -> bool:
+        return hotkey in self._hotkey_ids or hotkey.lower() in self._hotkey_names
+
+    def _warn_once(self, msg: str, console: bool = False) -> None:
         if msg not in self._warned:
             self._warned.add(msg)
             log.warning(msg)
+            if console:
+                self._out(msg)
 
     def _params(self) -> list[dict]:
         params = []
@@ -239,12 +268,22 @@ class VTSAvatar:
             return {}
 
     async def _learn(self, client: VTSClient) -> list[str]:
-        """Read what the loaded model has; returns the expression files currently active."""
-        hotkeys = (await self._call(client, "HotkeysInCurrentModel")).get("availableHotkeys") or []
-        exprs = (await self._call(client, "ExpressionState", {"details": False})).get("expressions") or []
-        self._hotkey_names = {str(h.get("name", "")).lower() for h in hotkeys if h.get("name")}
-        self._hotkey_ids = {str(h.get("hotkeyID")) for h in hotkeys if h.get("hotkeyID")}
-        self._model_expressions = {str(e.get("file")) for e in exprs if e.get("file")}
+        """Read what the loaded model has; returns the expression files currently active.
+
+        A request that failed (timeout, API error) keeps what was known before, so one bad
+        answer cannot make every mapping look "not in the model" for the rest of the session.
+        """
+        hk = await self._call(client, "HotkeysInCurrentModel")
+        ex = await self._call(client, "ExpressionState", {"details": False})
+        if "availableHotkeys" in hk:
+            hotkeys = hk["availableHotkeys"] or []
+            self._hotkey_names = {str(h.get("name", "")).lower() for h in hotkeys if h.get("name")}
+            self._hotkey_ids = {str(h.get("hotkeyID")) for h in hotkeys if h.get("hotkeyID")}
+        exprs = (ex.get("expressions") or []) if "expressions" in ex else []
+        if "expressions" in ex:
+            self._model_expressions = {str(e.get("file")) for e in exprs if e.get("file")}
+        if "availableHotkeys" in hk and "expressions" in ex:
+            self._warned.clear()  # fresh model info: report misses again
         return [str(e.get("file")) for e in exprs if e.get("active")]
 
     async def _reset(self, client: VTSClient) -> None:
@@ -262,16 +301,31 @@ class VTSAvatar:
             self._shown = state
             self._out(line)
 
+    def _allow_notice(self, line: str) -> None:
+        if not self._allow_noticed:
+            self._allow_noticed = True
+            self._out(line)
+
     async def _run(self) -> None:
         while True:
             try:
                 transport = await asyncio.wait_for(self._connect(self._s.url), CONNECT_TIMEOUT_S)
                 self._client = VTSClient(transport, self._s.plugin_name, self._s.plugin_developer,
-                                         self._s.token_file, self._out)
+                                         self._s.token_file, self._allow_notice)
                 await self._client.authenticate()
+                self._allow_noticed = False  # a later revoke should tell the owner again
                 await self._connected_session(self._client)
             except asyncio.CancelledError:
                 raise  # close() resets and closes the client
+            except VTSAuthDenied as e:
+                # Retrying would pop the Allow/Deny dialog up again every few seconds; wait for /avatar.
+                log.warning("avatar plugin not allowed: %s", e)
+                await self._drop_client()
+                self._rearm.clear()
+                self._parked = True
+                self._show("denied", DENIED_LINE)
+                await self._rearm.wait()
+                continue
             except Exception as e:
                 first = self._shown != "down"
                 if first:

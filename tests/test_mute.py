@@ -273,7 +273,11 @@ def _avatar_run_parts():
 class _FakeAvatar:
     def __init__(self):
         self.closed = 0
+        self.retried = 0
         self.tested = asyncio.Event()
+
+    def retry(self):
+        self.retried += 1
 
     def audio(self, s, r): pass
     def play_started(self): pass
@@ -308,6 +312,7 @@ async def test_avatar_command_prints_status(capsys, monkeypatch):
     await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Ingest), 5)
     out = capsys.readouterr().out
     assert "FAKE STATUS" in out and "FAKE TEST" in out and av.closed == 1
+    assert av.retried == 1  # /avatar re-arms a plugin the owner denied
 
 
 async def test_avatar_closed_on_quit(monkeypatch):
@@ -342,4 +347,10 @@ async def test_avatar_close_failure_does_not_skip_player_close(monkeypatch):
         async def run(self): self.on(Command("quit"))
 
     st, Sink = _avatar_run_parts()
-    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Ingest), 5)
+
+    class StopSink(Sink):
+        stopped = 0
+        def stop(self): StopSink.stopped += 1
+
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=StopSink(), ingest_factory=Ingest), 5)
+    assert StopSink.stopped >= 1  # player.close() still ran and stopped the sink

@@ -124,6 +124,7 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
     def avatar_test() -> None:
         nonlocal test_task
         print(avatar.status())
+        avatar.retry()  # re-arms the connection if the owner denied the plugin popup
         if test_task is not None and not test_task.done():
             return
         test_task = asyncio.create_task(avatar.self_test(print))

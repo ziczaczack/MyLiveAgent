@@ -437,6 +437,7 @@ async def test_null_avatar_is_inert():
     a.play_ended()
     a.muted()
     a.reply_done()
+    a.retry()
     await a.start()
     got = []
     await a.self_test(got.append)
@@ -474,3 +475,181 @@ def test_settings_bad_avatar_value(tmp_path):
     p.write_text(text.replace("fps: 30", "fps: lots"), encoding="utf-8")
     with pytest.raises(ConfigError):
         load_settings(p, {"DEEPSEEK_API_KEY": "k"})
+
+
+class DenyingVTS(FakeVTS):
+    """The saved token is rejected and the owner clicks Deny on the popup (or ignores it)."""
+
+    def __init__(self, deny=True, **kw):
+        super().__init__(**kw)
+        self.deny = deny
+
+    def reply_for(self, kind, data):
+        if kind == "Authentication":
+            return {"authenticated": data.get("authenticationToken") == "fresh"}  # saved "tok" is stale
+        if kind == "AuthenticationToken":
+            return {"authenticationToken": "fresh"}
+        return super().reply_for(kind, data)
+
+    async def send(self, msg):
+        if self.deny and msg["messageType"] == "AuthenticationTokenRequest":
+            self.sent.append(msg)
+            self.inbox.put_nowait({"messageType": "APIError", "requestID": msg["requestID"],
+                                   "data": {"errorID": 50, "message": "User has denied API access for your plugin."}})
+            return
+        await super().send(msg)
+
+
+def _deny_rig(tmp_path):
+    r = Rig(tmp_path)
+    r.deny = True
+
+    async def connect(url):
+        t = DenyingVTS(deny=r.deny)
+        r.transports.append(t)
+        return t
+
+    r.av._connect = connect
+    return r
+
+
+def _token_requests(r):
+    return sum(len(t.of("AuthenticationToken")) for t in r.transports)
+
+
+DENIED_LINE = "avatar: plugin not allowed in VTube Studio; type /avatar to ask again"
+ALLOW_NOTICE = "VTube Studio: click Allow in the popup to let this plugin connect."
+
+
+async def test_denied_parks_without_reasking(tmp_path):
+    r = _deny_rig(tmp_path)
+    try:
+        await r.av.start()
+        await until(lambda: DENIED_LINE in r.lines)
+        await asyncio.sleep(r.settings.reconnect_s * 10)
+        assert _token_requests(r) == 1
+        assert r.lines == [ALLOW_NOTICE, DENIED_LINE]
+        assert r.av.status() == "avatar: not allowed in VTube Studio (ws://test:1)"
+    finally:
+        await r.av.close()
+
+
+async def test_unanswered_popup_parks(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.avatar.vts.TOKEN_WAIT", 0.02)
+    r = _deny_rig(tmp_path)
+
+    class Silent(DenyingVTS):
+        async def send(self, msg):
+            if msg["messageType"] == "AuthenticationTokenRequest":
+                self.sent.append(msg)  # popup shown, nobody clicks
+                return
+            await super().send(msg)
+
+    async def connect(url):
+        t = Silent()
+        r.transports.append(t)
+        return t
+
+    r.av._connect = connect
+    try:
+        await r.av.start()
+        await until(lambda: DENIED_LINE in r.lines)
+        await asyncio.sleep(r.settings.reconnect_s * 10)
+        assert _token_requests(r) == 1 and r.lines.count(DENIED_LINE) == 1
+    finally:
+        await r.av.close()
+
+
+async def test_retry_rearms_after_deny(tmp_path):
+    r = _deny_rig(tmp_path)
+    try:
+        await r.av.start()
+        await until(lambda: DENIED_LINE in r.lines)
+        r.av.retry()
+        await until(lambda: _token_requests(r) == 2)
+        await until(lambda: r.lines.count(DENIED_LINE) == 2)
+        assert r.lines.count(ALLOW_NOTICE) == 2
+        r.deny = False  # the owner clicks Allow this time
+        r.av.retry()
+        await until(lambda: r.lines[-1] == "avatar: connected")
+        assert r.av.status() == "avatar: connected (ws://test:1)"
+        assert (tmp_path / ".vts_token").read_text(encoding="utf-8") == "fresh"
+    finally:
+        await r.av.close()
+
+
+async def test_retry_is_noop_unless_parked(rig):
+    rig.av.retry()  # before start
+    await rig.started()
+    rig.av.retry()
+    await ticks()
+    assert len(rig.transports) == 1 and rig.lines == ["avatar: connected"]
+
+
+async def test_allow_notice_printed_once_per_arm(tmp_path):
+    r = _deny_rig(tmp_path)
+
+    class DropsDuringPopup(DenyingVTS):
+        async def send(self, msg):
+            if msg["messageType"] == "AuthenticationTokenRequest":
+                self.sent.append(msg)
+                self.drop()  # VTube Studio closed while the popup was up
+                return
+            await super().send(msg)
+
+    async def connect(url):
+        t = DropsDuringPopup()
+        r.transports.append(t)
+        return t
+
+    r.av._connect = connect
+    try:
+        await r.av.start()
+        await until(lambda: _token_requests(r) >= 3)
+        assert r.lines.count(ALLOW_NOTICE) == 1
+    finally:
+        await r.av.close()
+
+
+async def test_failed_relearn_keeps_mappings(rig, monkeypatch):
+    monkeypatch.setattr("app.avatar.controller.SELF_TEST_HOLD_S", 0.01)
+    await rig.started()
+    orig = rig.t.send
+
+    async def send(msg):  # the model-info requests now fail with an API error
+        kind = msg["messageType"].removesuffix("Request")
+        if kind in ("HotkeysInCurrentModel", "ExpressionState"):
+            rig.t.sent.append(msg)
+            rig.t.inbox.put_nowait({"messageType": "APIError", "requestID": msg["requestID"],
+                                    "data": {"errorID": 1, "message": "busy"}})
+            return
+        await orig(msg)
+
+    rig.t.send = send
+    await rig.av.self_test(lambda line: None)
+    n_expr, n_hot = len(rig.t.of("ExpressionActivation")), len(rig.t.of("HotkeyTrigger"))
+    rig.av.react("annoyed", "facepalm")
+    await until(lambda: len(rig.t.of("HotkeyTrigger")) > n_hot)
+    assert rig.t.of("ExpressionActivation")[n_expr:] == [{"expressionFile": "SignAngry.exp3.json", "active": True}]
+    assert rig.t.of("HotkeyTrigger")[n_hot:] == [{"hotkeyID": FACEPALM}]
+    assert not any("not in the loaded model" in line or "has no" in line for line in rig.lines)
+
+
+async def test_missing_mapping_printed_once_and_reset_by_relearn(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.avatar.controller.SELF_TEST_HOLD_S", 0.01)
+    r = Rig(tmp_path, expressions=[e for e in EXPRESSIONS if e != "SignAngry.exp3.json"])
+    r.settings.actions["wave"] = "No Such Hotkey"
+    expr_line = ("avatar: model has no expression 'SignAngry.exp3.json' (emotion annoyed); "
+                 "check config or type /avatar after switching models")
+    hot_line = ("avatar: model has no hotkey 'No Such Hotkey' (action wave); "
+                "check config or type /avatar after switching models")
+    try:
+        await r.started()
+        r.av.react("annoyed", "wave")
+        r.av.react("annoyed", "wave")
+        assert r.lines.count(expr_line) == 1 and r.lines.count(hot_line) == 1
+        await r.av.self_test(lambda line: None)  # successful re-learn clears the warned set
+        r.av.react("annoyed", None)
+        assert r.lines.count(expr_line) == 2
+    finally:
+        await r.av.close()

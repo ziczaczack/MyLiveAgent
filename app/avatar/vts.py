@@ -14,8 +14,20 @@ API_VERSION = "1.0"
 TOKEN_WAIT = 60.0  # the owner has to click Allow in VTube Studio
 
 
+ERROR_USER_DENIED = 50  # the owner clicked Deny on the plugin popup
+
+
 class VTSError(Exception):
     """API error or protocol failure."""
+
+    def __init__(self, message: str, error_id: int | None = None, timed_out: bool = False) -> None:
+        super().__init__(message)
+        self.error_id = error_id
+        self.timed_out = timed_out
+
+
+class VTSAuthDenied(VTSError):
+    """The owner denied the plugin popup or did not answer it in time; retrying would just re-show it."""
 
 
 class Transport(Protocol):
@@ -77,7 +89,12 @@ class VTSClient:
         if token and await self._try_token(token):
             return
         self._on_notice("VTube Studio: click Allow in the popup to let this plugin connect.")
-        data = await self.request("AuthenticationToken", self._identity(), timeout=TOKEN_WAIT)
+        try:
+            data = await self.request("AuthenticationToken", self._identity(), timeout=TOKEN_WAIT)
+        except VTSError as e:
+            if e.error_id == ERROR_USER_DENIED or e.timed_out:
+                raise VTSAuthDenied(str(e), e.error_id, e.timed_out) from None
+            raise
         token = data.get("authenticationToken")
         if not token:
             raise VTSError("no authentication token returned")
@@ -101,7 +118,7 @@ class VTSClient:
             })
             return await asyncio.wait_for(fut, timeout)
         except asyncio.TimeoutError:
-            raise VTSError(f"{message_type} timed out") from None
+            raise VTSError(f"{message_type} timed out", timed_out=True) from None
         except ConnectionError as e:
             self._fail_all()
             raise VTSError("disconnected") from e
@@ -139,7 +156,9 @@ class VTSClient:
                     continue
                 data = msg.get("data") or {}
                 if msg.get("messageType") == "APIError":
-                    fut.set_exception(VTSError(f"APIError {data.get('errorID')}: {data.get('message')}"))
+                    eid = data.get("errorID")
+                    fut.set_exception(VTSError(f"APIError {eid}: {data.get('message')}",
+                                               eid if isinstance(eid, int) else None))
                 else:
                     fut.set_result(data)
         except asyncio.CancelledError:
