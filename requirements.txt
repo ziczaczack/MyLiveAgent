@@ -9,3 +9,4 @@ PyYAML
 python-dotenv
 pytest
 pytest-asyncio
+aiohttp
