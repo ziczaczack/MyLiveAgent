@@ -134,3 +134,25 @@ async def test_timeout_raises(tmp_path):
     with pytest.raises(VTSError):
         await c.request("HotkeyTrigger", timeout=0.05)
     await c.close()
+
+
+async def test_non_dict_frame_skipped(tmp_path):
+    t, c = make(tmp_path, {"HotkeyTrigger": {"ok": 1}})
+    t.inbox.put_nowait("garbage")
+    t.inbox.put_nowait({"messageType": "X", "requestID": "unknown"})
+    assert await c.request("HotkeyTrigger") == {"ok": 1}
+    await c.close()
+
+
+async def test_unexpected_reader_error_fails_fast(tmp_path):
+    t, c = make(tmp_path, {"HotkeyTrigger": None})
+
+    async def boom():
+        raise RuntimeError("boom")
+
+    t.receive = boom
+    with pytest.raises(VTSError, match="disconnected"):
+        await asyncio.wait_for(c.request("HotkeyTrigger", timeout=30), 2)
+    with pytest.raises(VTSError, match="disconnected"):
+        await asyncio.wait_for(c.request("HotkeyTrigger", timeout=30), 2)
+    await c.close()

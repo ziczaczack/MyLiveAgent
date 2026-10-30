@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 from pathlib import Path
 from typing import Callable, Protocol
+
+log = logging.getLogger(__name__)
 
 API_NAME = "VTubeStudioPublicAPI"
 API_VERSION = "1.0"
@@ -129,6 +132,8 @@ class VTSClient:
         try:
             while True:
                 msg = await self._transport.receive()
+                if not isinstance(msg, dict):
+                    continue
                 fut = self._pending.get(msg.get("requestID"))
                 if fut is None or fut.done():
                     continue
@@ -137,7 +142,12 @@ class VTSClient:
                     fut.set_exception(VTSError(f"APIError {data.get('errorID')}: {data.get('message')}"))
                 else:
                     fut.set_result(data)
+        except asyncio.CancelledError:
+            raise
         except ConnectionError:
+            self._fail_all()
+        except Exception:
+            log.exception("VTS reader failed")
             self._fail_all()
 
     def _fail_all(self) -> None:
