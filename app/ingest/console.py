@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from app.events import Event, Kind
 
-COMMANDS = {"auto", "mute", "unmute", "stats", "quit", "help"}
+COMMANDS = {"auto", "mute", "unmute", "stats", "quit", "help", "avatar"}
 
 _USAGE = {
     "c": "usage: /c <viewer> <comment text>",

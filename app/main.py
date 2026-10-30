@@ -13,6 +13,8 @@ import yaml
 from dotenv import load_dotenv
 
 from app.audio import Player, SoundDeviceSink
+from app.avatar.base import Avatar, NullAvatar
+from app.avatar.controller import VTSAvatar
 from app.brain.llm import Brain
 from app.config import ConfigError, Settings, load_settings, render_persona
 from app.events import Event
@@ -37,10 +39,15 @@ HELP = """Commands:
   /auto on|off      start or stop the mock viewer feed
   /mute, /unmute    silence or restore the voice
   /stats            latency percentiles, cost, tokens
+  /avatar           avatar status and a quick expression test
   /help             this list
   /quit             end the session"""
 
 HINT = "Type to talk as {dev}, or hold Alt+Space to dictate. /help for commands."
+
+
+def make_avatar(settings: Settings, out) -> Avatar:
+    return VTSAvatar(settings.avatar, out) if settings.avatar.enabled else NullAvatar()
 
 
 async def run(settings: Settings, *, client=None, tts=None, sink=None, ingest_factory=ConsoleIngest,
@@ -75,14 +82,17 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
         client = openai.AsyncOpenAI(base_url=settings.llm.base_url, api_key=settings.llm.api_key,
                                      timeout=settings.llm.request_timeout_s, max_retries=1)
     brain = Brain(client, settings.llm, persona)
-    player = Player(sink or SoundDeviceSink())
+    avatar = make_avatar(settings, print)
+    player = Player(sink or SoundDeviceSink(on_audio=avatar.audio), listener=avatar)
     player.start()
-    pipeline = Pipeline(brain, safety, tts or EdgeTTS(settings.tts), player, metrics, settings)
+    pipeline = Pipeline(brain, safety, tts or EdgeTTS(settings.tts), player, metrics, settings,
+                        avatar=avatar)
 
     router = Router(settings.router, settings.character_name)
     stop = asyncio.Event()
     mute = MuteController(player, print)
     mock_task: asyncio.Task | None = None
+    test_task: asyncio.Task | None = None
 
     def auto(arg: str) -> None:
         nonlocal mock_task
@@ -111,6 +121,13 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
             mock_task = None
             print("(auto off)")
 
+    def avatar_test() -> None:
+        nonlocal test_task
+        print(avatar.status())
+        if test_task is not None and not test_task.done():
+            return
+        test_task = asyncio.create_task(avatar.self_test(print))
+
     def on_line(item) -> None:
         try:
             if isinstance(item, Event):
@@ -130,6 +147,8 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
                 print(HELP)
             elif isinstance(item, Command) and item.name == "stats":
                 print(metrics.summary())
+            elif isinstance(item, Command) and item.name == "avatar":
+                avatar_test()
             elif isinstance(item, Command) and item.name == "auto":
                 auto(item.arg)
             elif isinstance(item, Command):
@@ -167,6 +186,7 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
         finally:
             stop.set()
 
+    await avatar.start()
     tasks = [asyncio.create_task(supervise("worker", worker, print, stop=stop)),
              asyncio.create_task(supervise("console", console, print, stop=stop))]
     try:
@@ -178,10 +198,16 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
             log.exception("hotkey stop failed")
         if mock_task is not None:
             tasks.append(mock_task)
+        if test_task is not None:
+            tasks.append(test_task)
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         print(metrics.summary())
+        try:
+            await avatar.close()
+        except Exception:  # noqa: BLE001 - must not skip player.close
+            log.exception("avatar close failed")
         await player.close()
         if own_client:
             await client.close()

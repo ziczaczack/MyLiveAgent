@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
 import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 
 from app.audio import Player
+from app.avatar.base import Avatar, NullAvatar
 from app.brain.llm import Brain
 from app.brain.prompt import describe_event
 from app.config import Settings
@@ -16,6 +18,7 @@ from app.metrics import ReplyRecord, SessionMetrics, Usage, cost_usd, format_rep
 from app.safety import Safety
 from app.tts.base import TTS
 
+log = logging.getLogger(__name__)
 
 _AUTH_MARKERS = ("authenticationerror", "permissiondenied", "401", "402", "insufficient balance")
 _AUTH_HINT = "!!! DeepSeek rejected the request — check DEEPSEEK_API_KEY in .env and your account balance."
@@ -37,15 +40,24 @@ class Pipeline:
     def __init__(self, brain: Brain, safety: Safety, tts: TTS, player: Player,
                  metrics: SessionMetrics, settings: Settings,
                  out: Callable[[str], None] = print,
-                 rng: random.Random | None = None, clock=time.perf_counter) -> None:
+                 rng: random.Random | None = None, clock=time.perf_counter,
+                 avatar: Avatar | None = None) -> None:
         self._brain, self._safety, self._tts, self._player = brain, safety, tts, player
         self._metrics, self._s, self._out = metrics, settings, out
         self._rng = rng or random.Random()
         self._clock = clock
+        self._avatar = avatar or NullAvatar()
         self._auth_hint_shown = False
 
     def over_budget(self) -> bool:
         return self._metrics.total_cost >= self._s.session_cost_cap_usd
+
+    def _av(self, name: str, *args) -> None:
+        # The Avatar protocol promises not to raise; a reply must survive one that does.
+        try:
+            getattr(self._avatar, name)(*args)
+        except Exception:  # noqa: BLE001
+            log.exception("avatar %s failed", name)
 
     async def _synthesize(self, text: str) -> bytes:
         return await asyncio.wait_for(self._tts.synthesize(text), self._s.tts.timeout_s)
@@ -85,6 +97,13 @@ class Pipeline:
                                     self._s.max_viewer_name_chars)
 
         self._player.start()
+        self._av("thinking")
+        try:
+            return await self._reply(ev, rec, event_text, over)
+        finally:
+            self._av("reply_done")
+
+    async def _reply(self, ev: Event, rec: ReplyRecord, event_text: str, over: bool) -> ReplyRecord:
         spoken: list[str] = []
 
         async def on_sentence(s: str) -> bool:
@@ -104,6 +123,8 @@ class Pipeline:
         rec.first_token_at, rec.usage, rec.error = result.first_token_at, result.usage, result.error
         if result.error is None:
             rec.emotion, rec.action = result.emotion, result.action
+            if spoken and not rec.safety:
+                self._av("react", result.emotion, result.action)
         if not spoken:
             line = self._rng.choice(self._s.lines.brain_lag)
             self._speak(line, rec)

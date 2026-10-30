@@ -234,3 +234,89 @@ async def test_tts_timeout_recorded_and_loop_continues(settings):
     rec = await pipe.handle(Event(Kind.DEV, text="again"))
     assert rec.error is None and sink.played == [b"Fine."]
     await player.close()
+
+
+class RecordingAvatar:
+    def __init__(self, raises=False):
+        self.calls, self.raises = [], raises
+
+    def _rec(self, name, *args):
+        self.calls.append((name, *args) if args else name)
+        if self.raises:
+            raise RuntimeError("avatar boom")
+
+    def thinking(self): self._rec("thinking")
+    def play_started(self): self._rec("play_started")
+    def play_ended(self): self._rec("play_ended")
+    def muted(self): self._rec("muted")
+    def audio(self, samples, sample_rate): self._rec("audio")
+    def react(self, emotion, action): self._rec("react", emotion, action)
+    def reply_done(self): self._rec("reply_done")
+    def status(self): return "rec"
+    async def start(self): pass
+    async def close(self): pass
+    async def self_test(self, out): pass
+
+
+def make_av(settings, sentences=(), result=None, raises=False):
+    pipe, brain, sink, metrics, outs, player = make(settings, sentences, result)
+    av = RecordingAvatar(raises)
+    pipe._avatar = av
+    return pipe, av, player, metrics
+
+
+async def test_avatar_sequence_happy_path(settings):
+    pipe, av, player, _ = make_av(settings, ["A."], BrainResult(emotion="happy", action="celebrate"))
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert av.calls == ["thinking", ("react", "happy", "celebrate"), "reply_done"]
+    await player.close()
+
+
+async def test_no_react_when_sentence_blocked(settings):
+    pipe, av, player, _ = make_av(settings, ["well shit."], BrainResult(emotion="happy"))
+    rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="hi"))
+    assert rec.safety and av.calls == ["thinking", "reply_done"]
+    await player.close()
+
+
+async def test_no_react_on_brain_lag(settings):
+    pipe, av, player, _ = make_av(settings, [], BrainResult(emotion="happy"))
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert av.calls == ["thinking", "reply_done"]
+    await player.close()
+
+
+async def test_no_react_on_brain_error(settings):
+    pipe, av, player, _ = make_av(settings, ["A."], BrainResult(error="timeout"))
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert av.calls == ["thinking", "reply_done"]
+    await player.close()
+
+
+async def test_no_pose_when_skipped_over_budget(settings):
+    settings.session_cost_cap_usd = 1e-9
+    pipe, av, player, _ = make_av(settings, ["Hi."], BrainResult(usage=Usage(0, 90, 10)))
+    await pipe.handle(Event(Kind.DEV, text="first"))
+    av.calls.clear()
+    rec = await pipe.handle(Event(Kind.COMMENT, viewer="v", text="hello"))
+    assert rec.error == "over_budget" and av.calls == []
+    await player.close()
+
+
+async def test_reply_done_called_even_when_handle_fails(settings):
+    pipe, av, player, metrics = make_av(settings, ["A."])
+
+    def boom(rec):
+        raise ValueError("bad")
+    metrics.add = boom
+    with pytest.raises(ValueError):
+        await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert av.calls[-1] == "reply_done"
+    await player.close()
+
+
+async def test_pipeline_speaks_when_avatar_raises(settings):
+    pipe, av, player, _ = make_av(settings, ["A."], raises=True)
+    rec = await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert rec.say == "A." and av.calls[0] == "thinking" and av.calls[-1] == "reply_done"
+    await player.close()

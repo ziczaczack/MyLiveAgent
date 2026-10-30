@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project state
 
-M1 thin slice runs from the console (typed events, no TikTok, Live2D or OBS yet). The Chinese planning documents are the source of truth for scope and design:
+M1 thin slice runs from the console (typed events, no TikTok or OBS yet). M2 avatar drives a VTube Studio model (mouth, expressions, actions, thinking pose) from the reply pipeline; if VTube Studio is off or closes, speech carries on. VTube Studio's "Start API (allow plugins)" must be on (port 8001); the plugin token is stored in git-ignored `config/.vts_token`. The Chinese planning documents are the source of truth for scope and design:
 
 - `AI Chibi 直播搭档 — 架构与方案提案.docx`: architecture, tech choices, latency/cost budgets, risks, planned directory layout.
 - `短视频涨粉计划.docx`: a 14-day TikTok short-video plan. Several videos depend on dev milestones (e.g. Day 5 needs M1 brain + TTS; Day 8 needs the safety layer; Day 12 needs gift routing), so milestone order matters.
@@ -14,7 +14,7 @@ To read them: `python -I` with `zipfile` on `word/document.xml`. Write the outpu
 ## Commands
 
 - Setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env` and set `DEEPSEEK_API_KEY`.
-- Run: `.venv/Scripts/python -m app`
+- Run: `.venv/Scripts/python -m app` (console `/avatar` prints avatar status and plays a quick expression test)
 - All tests: `.venv/Scripts/python -m pytest -q`
 - One test: `.venv/Scripts/python -m pytest tests/test_safety.py::test_no_scunthorpe -v`
 

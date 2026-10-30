@@ -15,3 +15,10 @@ class _NoopHotKeys:
 @pytest.fixture(autouse=True)
 def _no_real_hotkeys(monkeypatch):
     monkeypatch.setattr("pynput.keyboard.GlobalHotKeys", _NoopHotKeys)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_avatar(monkeypatch):
+    """Never connect to a VTube Studio that happens to be running on the dev machine."""
+    from app.avatar.base import NullAvatar
+    monkeypatch.setattr("app.main.make_avatar", lambda settings, out: NullAvatar())

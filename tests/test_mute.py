@@ -254,3 +254,92 @@ def test_combo_is_held_checks_every_key():
 def test_combo_is_held_allows_unknown_keys():
     # A key we can't map must not make the hotkey dead.
     assert combo_is_held("<ctrl>+<f13>", key_state=lambda vk: vk == 0x11)
+
+
+def _avatar_run_parts():
+    from pathlib import Path
+
+    from app.config import load_settings
+
+    class Sink:
+        async def play(self, b): pass
+        def stop(self): pass
+
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    st.paths.logs_dir = Path(__import__("tempfile").mkdtemp())
+    return st, Sink
+
+
+class _FakeAvatar:
+    def __init__(self):
+        self.closed = 0
+        self.tested = asyncio.Event()
+
+    def audio(self, s, r): pass
+    def play_started(self): pass
+    def play_ended(self): pass
+    def muted(self): pass
+    def status(self): return "FAKE STATUS"
+    async def start(self): pass
+
+    async def close(self):
+        self.closed += 1
+
+    async def self_test(self, out):
+        out("FAKE TEST")
+        self.tested.set()
+
+
+async def test_avatar_command_prints_status(capsys, monkeypatch):
+    from app.ingest.console import Command
+    from app.main import run
+
+    av = _FakeAvatar()
+    monkeypatch.setattr("app.main.make_avatar", lambda settings, out: av)
+
+    class Ingest:
+        def __init__(self, on_line): self.on = on_line
+
+        async def run(self):
+            self.on(Command("avatar"))
+            await av.tested.wait()
+
+    st, Sink = _avatar_run_parts()
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Ingest), 5)
+    out = capsys.readouterr().out
+    assert "FAKE STATUS" in out and "FAKE TEST" in out and av.closed == 1
+
+
+async def test_avatar_closed_on_quit(monkeypatch):
+    from app.ingest.console import Command
+    from app.main import run
+
+    av = _FakeAvatar()
+    monkeypatch.setattr("app.main.make_avatar", lambda settings, out: av)
+
+    class Ingest:
+        def __init__(self, on_line): self.on = on_line
+        async def run(self): self.on(Command("quit"))
+
+    st, Sink = _avatar_run_parts()
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Ingest), 5)
+    assert av.closed == 1
+
+
+async def test_avatar_close_failure_does_not_skip_player_close(monkeypatch):
+    from app.ingest.console import Command
+    from app.main import run
+
+    av = _FakeAvatar()
+
+    async def bad_close():
+        raise RuntimeError("x")
+    av.close = bad_close
+    monkeypatch.setattr("app.main.make_avatar", lambda settings, out: av)
+
+    class Ingest:
+        def __init__(self, on_line): self.on = on_line
+        async def run(self): self.on(Command("quit"))
+
+    st, Sink = _avatar_run_parts()
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Ingest), 5)
