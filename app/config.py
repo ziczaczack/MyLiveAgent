@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -75,6 +75,42 @@ class Paths:
 
 
 @dataclass
+class AvatarSettings:
+    enabled: bool = False
+    url: str = "ws://localhost:8001"
+    plugin_name: str = "MyLiveAgent"
+    plugin_developer: str = "Lok"
+    token_file: Path = Path("config/.vts_token")
+    reconnect_s: float = 5.0
+    fps: float = 30.0
+    mouth_gain: float = 4.0
+    mouth_smoothing: float = 0.4
+    expressions: dict[str, str] = field(default_factory=dict)  # emotion -> expression file
+    actions: dict[str, str] = field(default_factory=dict)  # action -> hotkey name or ID
+    thinking: dict[str, float] = field(default_factory=dict)  # parameter -> value
+
+
+def _avatar(raw: dict | None) -> AvatarSettings:
+    if raw is None:
+        return AvatarSettings()
+    d = AvatarSettings()
+    return AvatarSettings(
+        enabled=bool(raw.get("enabled", d.enabled)),
+        url=str(raw.get("url", d.url)),
+        plugin_name=str(raw.get("plugin_name", d.plugin_name)),
+        plugin_developer=str(raw.get("plugin_developer", d.plugin_developer)),
+        token_file=Path(raw.get("token_file", d.token_file)),
+        reconnect_s=float(raw.get("reconnect_s", d.reconnect_s)),
+        fps=float(raw.get("fps", d.fps)),
+        mouth_gain=float(raw.get("mouth_gain", d.mouth_gain)),
+        mouth_smoothing=float(raw.get("mouth_smoothing", d.mouth_smoothing)),
+        expressions={str(k): str(v) for k, v in (raw.get("expressions") or {}).items()},
+        actions={str(k): str(v) for k, v in (raw.get("actions") or {}).items()},
+        thinking={str(k): float(v) for k, v in (raw.get("thinking") or {}).items()},
+    )
+
+
+@dataclass
 class Settings:
     character_name: str
     dev_name: str
@@ -89,6 +125,7 @@ class Settings:
     lines: Lines
     paths: Paths
     mock_interval_s: tuple[float, float]
+    avatar: AvatarSettings = field(default_factory=AvatarSettings)
 
 
 def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
@@ -140,6 +177,7 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
             ),
             paths=Paths(**{k: Path(v) for k, v in raw["paths"].items()}),
             mock_interval_s=tuple(float(x) for x in raw["mock"]["interval_s"]),
+            avatar=_avatar(raw.get("avatar")),
         )
     except ConfigError:
         raise

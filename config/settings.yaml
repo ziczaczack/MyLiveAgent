@@ -57,3 +57,26 @@ lines:
     - "Nope. Way too serious for a chibi. Next question."
     - "Politics is above my pay grade. My pay grade is zero."
     - "I could answer that, but I'd rather roast Lok. Next."
+
+avatar:   # VTube Studio; model-specific names live here, never in Python
+  enabled: true
+  url: ws://localhost:8001
+  plugin_name: MyLiveAgent
+  plugin_developer: Lok
+  token_file: config/.vts_token
+  reconnect_s: 5
+  fps: 30
+  mouth_gain: 4.0
+  mouth_smoothing: 0.4
+  expressions:          # emotion -> expression file in the loaded model
+    happy: EyesLove.exp3.json
+    sulking: EyesCry.exp3.json
+    annoyed: SignAngry.exp3.json
+    shocked: SignShock.exp3.json
+  actions:              # action -> hotkey name or ID
+    celebrate: Anim Shake
+    facepalm: 5fbc7fac3d3649c6a8901600261a6983
+  thinking:             # injected parameter -> value while waiting
+    FaceAngleZ: 12
+    FaceAngleY: 8
+    EyeRightY: 0.8
