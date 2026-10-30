@@ -1,10 +1,15 @@
 import asyncio
 import inspect
+import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
+
+import numpy as np
+
+log = logging.getLogger(__name__)
 
 
 class AudioSink(Protocol):
@@ -15,8 +20,17 @@ class AudioSink(Protocol):
     def stop(self) -> None: ...
 
 
+class PlaybackListener(Protocol):
+    def play_started(self) -> None: ...
+
+    def play_ended(self) -> None: ...
+
+    def muted(self) -> None: ...
+
+
 class SoundDeviceSink:
-    def __init__(self) -> None:
+    def __init__(self, on_audio: Callable[[np.ndarray, int], None] | None = None) -> None:
+        self._on_audio = on_audio
         self._lock = threading.Lock()
         self._generation = 0
 
@@ -34,6 +48,11 @@ class SoundDeviceSink:
                 if self._generation != generation:
                     return  # stop() arrived after play() was called: do not start
                 sd.play(samples, decoded.sample_rate)
+            if self._on_audio is not None:
+                try:
+                    self._on_audio(samples, decoded.sample_rate)
+                except Exception:
+                    log.exception("on_audio hook failed")
             sd.wait()
 
         await asyncio.to_thread(_blocking)
@@ -53,8 +72,14 @@ class PlayTimes:
 
 
 class Player:
-    def __init__(self, sink: AudioSink, clock: Callable[[], float] = time.perf_counter) -> None:
+    def __init__(
+        self,
+        sink: AudioSink,
+        clock: Callable[[], float] = time.perf_counter,
+        listener: PlaybackListener | None = None,
+    ) -> None:
         self.sink = sink
+        self._listener = listener
         self.errors: list[str] = []
         self._clock = clock
         self._queue: asyncio.Queue[Awaitable[bytes | None]] = asyncio.Queue()
@@ -86,8 +111,17 @@ class Player:
         self._muted = on
         if not on:
             return
+        self._notify("muted")
         self.sink.stop()
         self._drain()
+
+    def _notify(self, name: str) -> None:
+        if self._listener is None:
+            return
+        try:
+            getattr(self._listener, name)()
+        except Exception:
+            log.exception("playback listener %s failed", name)
 
     def _drain(self) -> None:
         while True:
@@ -151,7 +185,10 @@ class Player:
             return
         if self._play_start_at is None:
             self._play_start_at = self._clock()
+        self._notify("play_started")
         try:
             await self.sink.play(audio)
         except Exception as e:
             self.errors.append(f"{type(e).__name__}: {e}")
+        finally:
+            self._notify("play_ended")

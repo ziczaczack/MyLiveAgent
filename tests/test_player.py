@@ -162,3 +162,99 @@ async def test_sound_device_sink_stop_before_playback_starts(monkeypatch):
     release.set()
     await task
     assert "play" not in calls
+
+
+class FakeListener:
+    def __init__(self, fail: bool = False):
+        self.events: list[str] = []
+        self._fail = fail
+
+    def _rec(self, name: str) -> None:
+        self.events.append(name)
+        if self._fail:
+            raise RuntimeError("listener broke")
+
+    def play_started(self) -> None:
+        self._rec("started")
+
+    def play_ended(self) -> None:
+        self._rec("ended")
+
+    def muted(self) -> None:
+        self._rec("muted")
+
+
+async def test_listener_sees_start_end_per_chunk():
+    lis = FakeListener()
+    p = Player(FakeSink(), listener=lis)
+    p.start()
+    p.enqueue(delayed(b"1", 0))
+    p.enqueue(delayed(b"2", 0))
+    await p.finish()
+    assert lis.events == ["started", "ended", "started", "ended"]
+    await p.close()
+
+
+async def test_listener_muted_on_mute():
+    lis = FakeListener()
+    p = Player(FakeSink(), listener=lis)
+    p.set_muted(True)
+    assert lis.events == ["muted"]
+
+
+async def test_listener_errors_do_not_stop_playback():
+    p = Player(FakeSink(), listener=FakeListener(fail=True))
+    p.start()
+    p.enqueue(delayed(b"1", 0))
+    p.enqueue(delayed(b"2", 0))
+    await p.finish()
+    assert p.sink.played == [b"1", b"2"]
+    p.set_muted(True)
+    await p.close()
+
+
+def _fake_audio(monkeypatch):
+    import sys
+    import types
+
+    import numpy as np
+
+    raw = np.array([1, -2, 3, -4], dtype=np.int16)
+    calls: list[str] = []
+    sd = types.ModuleType("sounddevice")
+    sd.play = lambda samples, rate: calls.append("play")
+    sd.wait = lambda: calls.append("wait")
+    sd.stop = lambda: calls.append("stop")
+    ma = types.ModuleType("miniaudio")
+    ma.SampleFormat = types.SimpleNamespace(SIGNED16=1)
+    ma.decode = lambda mp3, output_format: types.SimpleNamespace(
+        samples=raw.tobytes(), nchannels=2, sample_rate=24000
+    )
+    monkeypatch.setitem(sys.modules, "sounddevice", sd)
+    monkeypatch.setitem(sys.modules, "miniaudio", ma)
+    return raw, calls
+
+
+async def test_sink_on_audio_receives_samples_and_rate(monkeypatch):
+    from app.audio import SoundDeviceSink
+
+    raw, calls = _fake_audio(monkeypatch)
+    got = []
+    sink = SoundDeviceSink(on_audio=lambda s, r: got.append((s, r)))
+    await sink.play(b"mp3")
+    assert calls == ["play", "wait"]
+    assert got[0][1] == 24000
+    assert got[0][0].dtype.name == "int16" and got[0][0].shape == (2, 2)
+    assert got[0][0].ravel().tolist() == raw.tolist()
+
+
+async def test_sink_on_audio_error_does_not_stop_playback(monkeypatch):
+    from app.audio import SoundDeviceSink
+
+    _, calls = _fake_audio(monkeypatch)
+
+    def bad(samples, rate):
+        raise RuntimeError("avatar broke")
+
+    await SoundDeviceSink(on_audio=bad).play(b"mp3")
+    assert calls == ["play", "wait"]
