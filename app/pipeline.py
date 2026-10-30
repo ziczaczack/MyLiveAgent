@@ -123,7 +123,8 @@ class Pipeline:
         rec.first_token_at, rec.usage, rec.error = result.first_token_at, result.usage, result.error
         if result.error is None:
             rec.emotion, rec.action = result.emotion, result.action
-            if spoken and not rec.safety:
+            # Muted mid-generation: muted() already reset the avatar; don't flash an expression.
+            if spoken and not rec.safety and not self._player.muted:
                 self._av("react", result.emotion, result.action)
         if not spoken:
             line = self._rng.choice(self._s.lines.brain_lag)

@@ -90,23 +90,55 @@ class AvatarSettings:
     thinking: dict[str, float] = field(default_factory=dict)  # parameter -> value
 
 
-def _avatar(raw: dict | None) -> AvatarSettings:
+def _avatar_map(raw: dict, key: str) -> dict:
+    value = raw.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError(f"avatar.{key} must be a mapping of name: value, got {type(value).__name__}")
+    return value
+
+
+def _avatar_number(raw: dict, key: str, default: float, ok, rule: str) -> float:
+    value = raw.get(key, default)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"avatar.{key} must be a number, got {value!r}") from None
+    if not ok(number):
+        raise ConfigError(f"avatar.{key} must be {rule}, got {value!r}")
+    return number
+
+
+def _avatar(raw) -> AvatarSettings:
     if raw is None:
         return AvatarSettings()
+    if not isinstance(raw, dict):
+        raise ConfigError(f"avatar must be a mapping of settings, got {type(raw).__name__}")
     d = AvatarSettings()
+    enabled = raw.get("enabled", d.enabled)
+    if not isinstance(enabled, bool):  # "false" as a string would otherwise turn the avatar on
+        raise ConfigError(f"avatar.enabled must be true or false, got {enabled!r}")
+    thinking = {}
+    for k, v in _avatar_map(raw, "thinking").items():
+        try:
+            thinking[str(k)] = float(v)
+        except (TypeError, ValueError):
+            raise ConfigError(f"avatar.thinking.{k} must be a number, got {v!r}") from None
     return AvatarSettings(
-        enabled=bool(raw.get("enabled", d.enabled)),
+        enabled=enabled,
         url=str(raw.get("url", d.url)),
         plugin_name=str(raw.get("plugin_name", d.plugin_name)),
         plugin_developer=str(raw.get("plugin_developer", d.plugin_developer)),
         token_file=Path(raw.get("token_file", d.token_file)),
-        reconnect_s=float(raw.get("reconnect_s", d.reconnect_s)),
-        fps=float(raw.get("fps", d.fps)),
-        mouth_gain=float(raw.get("mouth_gain", d.mouth_gain)),
-        mouth_smoothing=float(raw.get("mouth_smoothing", d.mouth_smoothing)),
-        expressions={str(k): str(v) for k, v in (raw.get("expressions") or {}).items()},
-        actions={str(k): str(v) for k, v in (raw.get("actions") or {}).items()},
-        thinking={str(k): float(v) for k, v in (raw.get("thinking") or {}).items()},
+        reconnect_s=_avatar_number(raw, "reconnect_s", d.reconnect_s, lambda x: x > 0, "greater than 0"),
+        fps=_avatar_number(raw, "fps", d.fps, lambda x: x > 0, "greater than 0"),
+        mouth_gain=_avatar_number(raw, "mouth_gain", d.mouth_gain, lambda x: x > 0, "greater than 0"),
+        mouth_smoothing=_avatar_number(raw, "mouth_smoothing", d.mouth_smoothing,
+                                       lambda x: 0 <= x < 1, "at least 0 and less than 1"),
+        expressions={str(k): str(v) for k, v in _avatar_map(raw, "expressions").items()},
+        actions={str(k): str(v) for k, v in _avatar_map(raw, "actions").items()},
+        thinking=thinking,
     )
 
 
@@ -181,7 +213,7 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
         )
     except ConfigError:
         raise
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
         raise ConfigError(f"Settings file {path} is missing or has a bad value: {e}") from None
 
 

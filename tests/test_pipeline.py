@@ -252,6 +252,7 @@ class RecordingAvatar:
     def audio(self, samples, sample_rate): self._rec("audio")
     def react(self, emotion, action): self._rec("react", emotion, action)
     def reply_done(self): self._rec("reply_done")
+    def retry(self): self._rec("retry")
     def status(self): return "rec"
     async def start(self): pass
     async def close(self): pass
@@ -319,4 +320,26 @@ async def test_pipeline_speaks_when_avatar_raises(settings):
     pipe, av, player, _ = make_av(settings, ["A."], raises=True)
     rec = await pipe.handle(Event(Kind.DEV, text="hi"))
     assert rec.say == "A." and av.calls[0] == "thinking" and av.calls[-1] == "reply_done"
+    await player.close()
+
+
+async def test_no_react_when_muted_during_generation(settings):
+    pipe, av, player, _ = make_av(settings, ["A."], BrainResult(emotion="happy", action="celebrate"))
+    brain = pipe._brain
+    orig = brain.reply
+
+    async def reply(event_text, on_sentence, max_tokens=None):
+        result = await orig(event_text, on_sentence, max_tokens)
+        player.set_muted(True)  # owner hits mute while the LLM is still finishing
+        return result
+
+    brain.reply = reply
+    await pipe.handle(Event(Kind.DEV, text="hi"))
+    assert not any(isinstance(c, tuple) and c[0] == "react" for c in av.calls)
+    assert av.calls[-1] == "reply_done"
+    player.set_muted(False)
+    av.calls.clear()
+    brain.reply = orig
+    await pipe.handle(Event(Kind.DEV, text="again"))
+    assert ("react", "happy", "celebrate") in av.calls  # unmuted: reactions are back
     await player.close()

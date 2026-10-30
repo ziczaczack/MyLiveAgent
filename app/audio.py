@@ -107,6 +107,10 @@ class Player:
         self._play_start_at = None
         return times
 
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
     def set_muted(self, on: bool) -> None:
         self._muted = on
         if not on:
