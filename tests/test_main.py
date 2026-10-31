@@ -116,3 +116,63 @@ async def test_unwritable_logs_dir_is_a_one_line_error(tmp_path):
     with pytest.raises(ConfigError) as e:
         await run(st, client=object(), tts=object(), sink=object())
     assert str(e.value).startswith("(cannot write logs to ")
+
+
+async def test_yt_command_starts_and_stops_reader(tmp_path, capsys, monkeypatch):
+    import asyncio
+    from pathlib import Path
+
+    from app.config import load_settings
+    from app.events import Event, Kind
+    from app.ingest.console import Command
+    from app.main import run
+
+    started = []
+
+    class FakeYT:
+        def __init__(self, url, settings, out):
+            started.append(url)
+
+        async def run(self, emit):
+            emit(Event(Kind.COMMENT, viewer="yt_viewer", text="hello from youtube"))
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("app.main.YouTubeChat", FakeYT)
+
+    class Script:
+        def __init__(self, on_line):
+            self.on = on_line
+
+        async def run(self):
+            self.on(Command("yt", ""))
+            self.on(Command("yt", "off"))
+            self.on(Command("yt", "https://youtu.be/abc"))
+            self.on(Command("yt", "https://youtu.be/abc"))
+            await asyncio.sleep(0.1)
+            self.on(Command("yt", "off"))
+            self.on(Command("quit"))
+
+    class Sink:
+        async def play(self, b): pass
+        def stop(self): pass
+
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    st.paths.logs_dir = tmp_path
+    await asyncio.wait_for(run(st, client=object(), tts=object(), sink=Sink(), ingest_factory=Script), 5)
+    out = capsys.readouterr().out
+    assert "usage: /yt <live link> | /yt off" in out
+    assert "(youtube is already off)" in out
+    assert "(youtube on)" in out
+    assert "(youtube is already on; /yt off first)" in out
+    assert "(youtube off)" in out
+    assert started == ["https://youtu.be/abc"]
+
+
+def test_youtube_settings_loaded():
+    from pathlib import Path
+
+    from app.config import load_settings
+
+    st = load_settings(Path("config/settings.yaml"), {"DEEPSEEK_API_KEY": "k"})
+    assert st.youtube.big_superchat["USD"] == 5
+    assert st.youtube.retry_s == 5

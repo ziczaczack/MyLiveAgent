@@ -10,3 +10,4 @@ python-dotenv
 pytest
 pytest-asyncio
 aiohttp
+pytchat

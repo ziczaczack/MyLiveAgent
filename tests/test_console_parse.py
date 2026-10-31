@@ -28,6 +28,7 @@ def test_commands():
     assert parse_line("/auto on") == Command("auto", "on")
     assert parse_line("/mute") == Command("mute")
     assert parse_line("/help") == Command("help")
+    assert parse_line("/yt https://youtu.be/abc") == Command("yt", "https://youtu.be/abc")
 
 
 def test_errors_and_blank():

@@ -80,3 +80,10 @@ avatar:   # VTube Studio; model-specific names live here, never in Python
     FaceAngleZ: 12
     FaceAngleY: 8
     EyeRightY: 0.8
+
+youtube:
+  big_superchat:   # Super Chat at or above this amount counts as a big gift; other currencies are small
+    USD: 5
+    MYR: 20
+    SGD: 7
+  retry_s: 5

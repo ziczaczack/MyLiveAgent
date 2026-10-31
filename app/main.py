@@ -21,6 +21,7 @@ from app.events import Event
 from app.hotkey import MuteController, MuteHotkey
 from app.ingest.console import Command, ConsoleIngest, ParseError
 from app.ingest.mock import MockFeed
+from app.ingest.youtube import YouTubeChat
 from app.metrics import SessionMetrics
 from app.pipeline import Pipeline
 from app.router import Router
@@ -37,6 +38,7 @@ HELP = """Commands:
   /f <name>         new follower
   /quiet            trigger idle self-talk
   /auto on|off      start or stop the mock viewer feed
+  /yt <link>|off    read a YouTube live chat (unofficial, read only)
   /mute, /unmute    silence or restore the voice
   /stats            latency percentiles, cost, tokens
   /avatar           avatar status and a quick expression test
@@ -93,6 +95,7 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
     mute = MuteController(player, print)
     mock_task: asyncio.Task | None = None
     test_task: asyncio.Task | None = None
+    yt_task: asyncio.Task | None = None
 
     def auto(arg: str) -> None:
         nonlocal mock_task
@@ -120,6 +123,26 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
             mock_task.cancel()
             mock_task = None
             print("(auto off)")
+
+    def youtube(arg: str) -> None:
+        nonlocal yt_task
+        arg = arg.strip()
+        running = yt_task is not None and not yt_task.done()
+        if not arg:
+            print("usage: /yt <live link> | /yt off")
+        elif arg.lower() == "off":
+            if not running:
+                print("(youtube is already off)")
+            else:
+                yt_task.cancel()
+                yt_task = None
+                print("(youtube off)")
+        elif running:
+            print("(youtube is already on; /yt off first)")
+        else:
+            chat = YouTubeChat(arg, settings.youtube, print)
+            yt_task = asyncio.create_task(supervise("youtube", lambda: chat.run(on_line), print, stop=stop))
+            print("(youtube on)")
 
     def avatar_test() -> None:
         nonlocal test_task
@@ -152,6 +175,8 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
                 avatar_test()
             elif isinstance(item, Command) and item.name == "auto":
                 auto(item.arg)
+            elif isinstance(item, Command) and item.name == "yt":
+                youtube(item.arg)
             elif isinstance(item, Command):
                 print(f"/{item.name}: not available yet")
         except Exception as e:  # noqa: BLE001 - one bad line must not end the session
@@ -201,6 +226,8 @@ async def _run(settings, persona, safety, metrics, client, tts, sink, ingest_fac
             tasks.append(mock_task)
         if test_task is not None:
             tasks.append(test_task)
+        if yt_task is not None:
+            tasks.append(yt_task)
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

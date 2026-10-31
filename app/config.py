@@ -90,6 +90,30 @@ class AvatarSettings:
     thinking: dict[str, float] = field(default_factory=dict)  # parameter -> value
 
 
+@dataclass
+class YouTubeSettings:
+    big_superchat: dict[str, float] = field(default_factory=dict)  # currency -> amount counted as big
+    retry_s: float = 5.0
+
+
+def _youtube(raw) -> YouTubeSettings:
+    if raw is None:
+        return YouTubeSettings()
+    if not isinstance(raw, dict):
+        raise ConfigError(f"youtube must be a mapping of settings, got {type(raw).__name__}")
+    big = raw.get("big_superchat") or {}
+    if not isinstance(big, dict):
+        raise ConfigError(f"youtube.big_superchat must be a mapping of currency: amount, got {type(big).__name__}")
+    try:
+        amounts = {str(k).upper(): float(v) for k, v in big.items()}
+        retry_s = float(raw.get("retry_s", YouTubeSettings.retry_s))
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"youtube settings must be numbers: {e}") from None
+    if retry_s <= 0:
+        raise ConfigError(f"youtube.retry_s must be greater than 0, got {retry_s!r}")
+    return YouTubeSettings(big_superchat=amounts, retry_s=retry_s)
+
+
 def _avatar_map(raw: dict, key: str) -> dict:
     value = raw.get(key)
     if value is None:
@@ -158,6 +182,7 @@ class Settings:
     paths: Paths
     mock_interval_s: tuple[float, float]
     avatar: AvatarSettings = field(default_factory=AvatarSettings)
+    youtube: YouTubeSettings = field(default_factory=YouTubeSettings)
 
 
 def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
@@ -210,6 +235,7 @@ def load_settings(path: Path, env: Mapping[str, str]) -> Settings:
             paths=Paths(**{k: Path(v) for k, v in raw["paths"].items()}),
             mock_interval_s=tuple(float(x) for x in raw["mock"]["interval_s"]),
             avatar=_avatar(raw.get("avatar")),
+            youtube=_youtube(raw.get("youtube")),
         )
     except ConfigError:
         raise
