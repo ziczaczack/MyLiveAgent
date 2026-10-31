@@ -79,7 +79,7 @@ async def no_sleep(_s):
 async def test_run_emits_events_then_reports_end():
     out = []
     chats = iter([[msg(text="one", timestamp=now_us()), msg(text="two", timestamp=now_us())]])
-    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url: next(chats), sleep=no_sleep)
+    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url, stop: next(chats), sleep=no_sleep)
     events = []
     await asyncio.wait_for(yt.run(events.append), 2)
     assert [e.text for e in events] == ["one", "two"]
@@ -90,7 +90,7 @@ async def test_backlog_from_before_connect_is_skipped():
     out = []
     old = now_us() - 60_000_000
     chats = iter([[msg(text="old", timestamp=old), msg(text="new", timestamp=now_us()), msg(text="no ts")]])
-    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url: next(chats), sleep=no_sleep)
+    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url, stop: next(chats), sleep=no_sleep)
     events = []
     await asyncio.wait_for(yt.run(events.append), 2)
     assert [e.text for e in events] == ["new", "no ts"]
@@ -100,7 +100,7 @@ async def test_transient_errors_retry_and_print_once():
     out, sleeps = [], []
     attempts = iter([ConnectionError("net down"), ConnectionError("net down"), [msg(text="back")]])
 
-    def open_chat(url):
+    def open_chat(url, stop):
         item = next(attempts)
         if isinstance(item, Exception):
             raise item
@@ -125,7 +125,7 @@ async def test_error_mid_stream_retries():
         raise RuntimeError("parse failed")
 
     chats = iter([broken(), [msg(text="b", timestamp=now_us())]])
-    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url: next(chats), sleep=no_sleep)
+    yt = YouTubeChat("url", SETTINGS, out.append, open_chat=lambda url, stop: next(chats), sleep=no_sleep)
     events = []
     await asyncio.wait_for(yt.run(events.append), 2)
     assert [e.text for e in events] == ["a", "b"]
@@ -138,7 +138,7 @@ async def test_bad_link_stops_without_retry():
 
     out, calls = [], []
 
-    def open_chat(url):
+    def open_chat(url, stop):
         calls.append(url)
         raise InvalidURL("not a youtube link")
 
@@ -156,7 +156,7 @@ async def test_cancel_while_library_blocks_returns_promptly():
         release.wait(5)
         yield msg(text="late", timestamp=now_us())
 
-    yt = YouTubeChat("url", SETTINGS, lambda s: None, open_chat=lambda url: blocking(), sleep=no_sleep)
+    yt = YouTubeChat("url", SETTINGS, lambda s: None, open_chat=lambda url, stop: blocking(), sleep=no_sleep)
     events = []
     task = asyncio.create_task(yt.run(events.append))
     for _ in range(100):
@@ -208,3 +208,62 @@ def test_pytchat_sticker_and_member_converted():
     assert to_event(from_pytchat(_Item("superSticker", amountValue=1.0, currency="USD")), BIG).kind == Kind.GIFT
     assert to_event(from_pytchat(_Item("newSponsor", name="newbie")), BIG).kind == Kind.FOLLOW
     assert to_event(from_pytchat(_Item("donation")), BIG) is None
+
+
+def test_real_currency_shapes_count_as_big():
+    # pytchat leaves unmapped currencies as the raw prefix, e.g. "MYR "; RM is the local symbol
+    assert to_event(msg("paid_message", money=money(20.0, "MYR ")), BIG).big
+    assert to_event(msg("paid_message", money=money(25.0, "RM")), BIG).big
+    assert to_event(msg("paid_message", money=money(5.0, "$")), BIG).big
+
+
+async def test_idle_chat_is_paced_and_stops_on_cancel(monkeypatch):
+    import sys
+    import types
+
+    from app.ingest import youtube
+
+    calls = {"get": 0, "terminated": 0}
+
+    class Data:
+        items = []
+        interval = 0.05
+
+    class FakeChat:
+        def is_alive(self):
+            return True
+
+        def get(self):
+            calls["get"] += 1
+            return Data()
+
+        def raise_for_status(self):
+            pass
+
+        def terminate(self):
+            calls["terminated"] += 1
+
+    monkeypatch.setitem(sys.modules, "pytchat", types.SimpleNamespace(create=lambda **kw: FakeChat()))
+    monkeypatch.setattr(youtube, "_MIN_POLL_S", 0.05)
+    yt = YouTubeChat("url", SETTINGS, lambda s: None, sleep=no_sleep)
+    task = asyncio.create_task(yt.run(lambda e: None))
+    await asyncio.sleep(0.5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+    assert 2 <= calls["get"] <= 15  # paced by the chat's interval, not a busy loop
+    for _ in range(50):
+        if calls["terminated"]:
+            break
+        await asyncio.sleep(0.01)
+    assert calls["terminated"] == 1  # the polling thread noticed the stop and closed the chat
+
+
+def test_bad_youtube_thresholds_rejected():
+    import pytest
+
+    from app.config import ConfigError, _youtube
+
+    for bad in ({"big_superchat": {"USD": 0}}, {"big_superchat": {"USD": -1}},
+                {"big_superchat": {"USD": float("nan")}}, {"retry_s": 0}):
+        with pytest.raises(ConfigError):
+            _youtube(bad)

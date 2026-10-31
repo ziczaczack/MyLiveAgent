@@ -16,6 +16,14 @@ log = logging.getLogger(__name__)
 _PERMANENT = {"InvalidURL", "InvalidVideoIdException"}
 _PAID = {"paid_message": "Super Chat", "paid_sticker": "Super Sticker"}
 _BACKLOG_GRACE_US = 5_000_000  # YouTube replays recent chat on (re)connect; older than this is skipped
+_MIN_POLL_S = 1.0  # never ask YouTube for chat more often than this
+_SYMBOLS = {"RM": "MYR", "$": "USD", "US$": "USD", "S$": "SGD"}
+
+
+def _currency_code(raw) -> str:
+    # pytchat maps some symbols to ISO codes and leaves the rest raw, e.g. "MYR\xa0"
+    text = str(raw or "").strip().upper()
+    return _SYMBOLS.get(text, text)
 
 
 def to_event(msg: dict, big_amounts: dict[str, float]) -> Event | None:
@@ -27,7 +35,7 @@ def to_event(msg: dict, big_amounts: dict[str, float]) -> Event | None:
         return Event(Kind.COMMENT, viewer=viewer, text=text) if text.strip() else None
     if kind in _PAID:
         money = msg.get("money") or {}
-        threshold = big_amounts.get(str(money.get("currency") or "").upper())
+        threshold = big_amounts.get(_currency_code(money.get("currency")))
         big = threshold is not None and float(money.get("amount") or 0) >= threshold
         label = f"{_PAID[kind]} {money.get('text') or ''}".strip()
         return Event(Kind.GIFT, viewer=viewer, gift=label, big=big, text=text)
@@ -51,16 +59,20 @@ def from_pytchat(item) -> dict:
     }
 
 
-def _open_chat(url: str) -> Iterable[dict]:
+def _open_chat(url: str, stop: threading.Event) -> Iterable[dict]:
     import pytchat
 
     chat = pytchat.create(video_id=url, interruptable=False)  # accepts a link or a video id
 
     def messages():
         try:
-            while chat.is_alive():
-                for item in chat.get().items:
+            while chat.is_alive() and not stop.is_set():
+                data = chat.get()  # fetches immediately; pacing is ours
+                for item in getattr(data, "items", ()):
                     yield from_pytchat(item)
+                stop.wait(max(_MIN_POLL_S, min(float(getattr(data, "interval", 0) or 0), 5.0)))
+            if stop.is_set():
+                return
             try:
                 chat.raise_for_status()
             except Exception as e:  # noqa: BLE001 - "stream finished" is a normal end
@@ -76,7 +88,8 @@ class YouTubeChat:
     """Reads one live stream's chat. The library blocks, so it runs on a daemon thread."""
 
     def __init__(self, url: str, settings: YouTubeSettings, out: Callable[[str], None],
-                 open_chat: Callable[[str], Iterable[dict]] = _open_chat, sleep=asyncio.sleep) -> None:
+                 open_chat: Callable[[str, threading.Event], Iterable[dict]] = _open_chat,
+                 sleep=asyncio.sleep) -> None:
         self._url = url
         self._s = settings
         self._out = out
@@ -90,14 +103,14 @@ class YouTubeChat:
             if outcome == "end":
                 self._out("youtube: chat ended")
                 return
-            reason = str(error) or type(error).__name__
+            reason = (str(error) or type(error).__name__)[:120]
             if type(error).__name__ in _PERMANENT:
                 self._out(f"youtube: {reason}. Check the link and run /yt again.")
                 return
             log.warning("youtube chat failed: %s", reason)
-            if reason != self._last_error:
+            if type(error).__name__ != self._last_error:  # by type: messages may embed ids or times
                 self._out(f"youtube: {reason}; retrying every {self._s.retry_s:g} s")
-                self._last_error = reason
+                self._last_error = type(error).__name__
             await self._sleep(self._s.retry_s)
 
     async def _read_once(self, emit) -> tuple[str, BaseException | None]:
@@ -115,7 +128,7 @@ class YouTubeChat:
 
         def pump() -> None:
             try:
-                chat = self._open(self._url)
+                chat = self._open(self._url, stop)
                 put(("open", None))
                 for msg in chat:
                     if stop.is_set():

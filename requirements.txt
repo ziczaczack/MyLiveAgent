@@ -11,3 +11,4 @@ pytest
 pytest-asyncio
 aiohttp
 pytchat
+httpx[http2]  # pytchat uses HTTP/2

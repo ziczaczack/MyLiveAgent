@@ -1,6 +1,7 @@
 """Settings loading and persona rendering."""
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -109,8 +110,11 @@ def _youtube(raw) -> YouTubeSettings:
         retry_s = float(raw.get("retry_s", YouTubeSettings.retry_s))
     except (TypeError, ValueError) as e:
         raise ConfigError(f"youtube settings must be numbers: {e}") from None
-    if retry_s <= 0:
+    if not math.isfinite(retry_s) or retry_s <= 0:
         raise ConfigError(f"youtube.retry_s must be greater than 0, got {retry_s!r}")
+    for code, amount in amounts.items():
+        if not math.isfinite(amount) or amount <= 0:
+            raise ConfigError(f"youtube.big_superchat.{code} must be greater than 0, got {amount!r}")
     return YouTubeSettings(big_superchat=amounts, retry_s=retry_s)
 
 
