@@ -14,7 +14,7 @@ To read them: `python -I` with `zipfile` on `word/document.xml`. Write the outpu
 ## Commands
 
 - Setup: `python -m venv .venv`, then `.venv/Scripts/python -m pip install -r requirements.txt`, then copy `.env.example` to `.env` and set `DEEPSEEK_API_KEY`.
-- Run: `.venv/Scripts/python -m app` (console `/avatar` prints avatar status and plays a quick expression test)
+- Run: `.venv/Scripts/python -m app` (console `/avatar` prints avatar status and plays a quick expression test; `/yt <live link>` reads a YouTube live chat via the unofficial `pytchat`, read only, `/yt off` stops it)
 - All tests: `.venv/Scripts/python -m pytest -q`
 - One test: `.venv/Scripts/python -m pytest tests/test_safety.py::test_no_scunthorpe -v`
 
