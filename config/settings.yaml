@@ -13,7 +13,7 @@ llm:
   first_token_timeout_s: 6
   request_timeout_s: 10      # SDK connect/read timeout per request
   total_reply_timeout_s: 15  # whole streamed reply
-  history_turns: 16
+  history_turns: 16          # grows to 24, then trims back to 16 in one go (keeps the cache prefix)
   json_mode: true
   extra_body:
     thinking:

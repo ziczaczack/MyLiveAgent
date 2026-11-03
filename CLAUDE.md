@@ -42,18 +42,23 @@ Main pipeline:
 
 Config lives in `config/settings.yaml`: model name, latency limits, and a per-stream token cap that switches to shorter or gift-only replies when exceeded. `DEEPSEEK_API_KEY` goes in `.env`, which is git-ignored.
 
-## Latency budget (targets, not yet measured)
+## Latency budget
 
-| Stage | Target |
-| --- | --- |
-| Ingest | 0.5 s |
-| Router | 0.1 s |
-| LLM first sentence | 1.2 s |
-| TTS first audio | 0.8 s |
-| Playback and mouth movement | 0.2 s |
-| **Total** | **≈2.8 s** |
+Measured 2026-11-03: 20 min of mock viewers (one event every 2–6 s), real DeepSeek and edge-tts, silent sink that waits for each clip's real length. 103 replies, no errors. Per-reply rows are in `logs/session-*.jsonl`; `/stats` prints p50/p90.
 
-Measure each stage once the MVP runs and record the real numbers.
+| Stage | Target | Measured p50 / p90 |
+| --- | --- | --- |
+| Ingest | 0.5 s | not measured (mock events start at arrival) |
+| Router queue wait | 0.1 s | 11.1 s / 24.7 s |
+| LLM first sentence | 1.2 s | 1.0 s / 1.3 s |
+| TTS first audio | 0.8 s | 1.3 s / 1.9 s |
+| Playback and mouth movement | 0.2 s | 0.0 s |
+| **One reply, without queueing** | **≈2.8 s** | **2.3 s / 3.0 s** |
+| **Comment to speech, with queueing** | | **13.3 s / 26.8 s** |
+
+The pipeline meets the budget. Viewers still wait because each reply speaks for about 9 s (p50 98 characters) while events arrive every 2–6 s, so the character talks 100% of the time and the queue backs up.
+
+Cost: $0.12/h at peak price, with the character talking nonstop. The DeepSeek cache hit rate was 91% for the first 16 turns and then fell to 58%, because dropping one old turn per reply changed the prefix after the persona. History now trims in batches (16 to 24 turns). A 10-minute rerun (47 replies) kept 91% after turn 16 and cost $0.02/h at off-peak price.
 
 ## First milestone (M1)
 

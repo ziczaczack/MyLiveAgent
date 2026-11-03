@@ -128,10 +128,26 @@ async def test_unparseable_json_keeps_streamed_say(settings_llm):
 def test_history_capped(settings_llm):
     settings_llm.history_turns = 2
     b = Brain(None, settings_llm, "P")
-    for i in range(3):
+    for i in range(4):
         b.remember(f"e{i}", f"s{i}", "happy", None)
-    assert len(b.history) == 2 and b.history[0][0] == "e1"
-    assert b.history[-1][1] == '{"say": "s2", "emotion": "happy", "action": null}'
+    assert len(b.history) == 2 and b.history[0][0] == "e2"
+    assert b.history[-1][1] == '{"say": "s3", "emotion": "happy", "action": null}'
+
+
+def test_history_trims_in_batches_to_keep_cache_prefix(settings_llm):
+    # Dropping one turn per reply changes the prompt right after the persona, so the
+    # DeepSeek prefix cache misses every turn. Grow to 1.5x, then cut back in one go.
+    settings_llm.history_turns = 16
+    b = Brain(None, settings_llm, "P")
+    sizes = []
+    for i in range(40):
+        before = list(b.history)
+        b.remember(f"e{i}", f"s{i}", "happy", None)
+        sizes.append(len(b.history))
+        if len(b.history) > len(before):
+            assert b.history[:-1] == before  # append only: the cached prefix survives
+    assert max(sizes) == 24 and min(sizes[16:]) == 16
+    assert sum(1 for a, c in zip(sizes, sizes[1:]) if c < a) == 2  # trims at turns 25 and 34
 
 
 async def test_history_goes_into_messages(settings_llm):

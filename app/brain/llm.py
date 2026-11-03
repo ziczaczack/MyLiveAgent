@@ -32,7 +32,11 @@ class Brain:
     def remember(self, event_text: str, spoken: str, emotion: str, action: str | None) -> None:
         reply = json.dumps({"say": spoken, "emotion": emotion, "action": action}, ensure_ascii=False)
         self.history.append((event_text, reply))
-        del self.history[:max(0, len(self.history) - self._s.history_turns)]
+        # Trim in batches: dropping one turn per reply shifts everything after the persona
+        # and the DeepSeek prefix cache misses on every turn.
+        keep = self._s.history_turns
+        if len(self.history) > keep + keep // 2:
+            del self.history[:len(self.history) - keep]
 
     async def reply(self, event_text: str, on_sentence: Callable[[str], Awaitable[bool]],
                     max_tokens: int | None = None) -> BrainResult:
