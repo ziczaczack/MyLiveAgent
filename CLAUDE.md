@@ -66,4 +66,6 @@ Mock comments → DeepSeek → safety filter → edge-tts, heard locally. No Tik
 
 ## Open decisions (the owner's call; don't assume)
 
-Stream language (Chinese, English or Manglish), the character's name and personality, and whether TTS runs locally or in the cloud.
+The character's name (viewers suggest it in comments; `character_name` stays a placeholder until then) and whether TTS runs locally or in the cloud.
+
+Decided: the stream and short videos are in Manglish; the personality is the one in `config/persona.md` (no viewer vote). The video plan is `docs/tiktok-14-day-plan.md`.

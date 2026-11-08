@@ -5,3 +5,26 @@ __pycache__/
 .pytest_cache/
 .superpowers/
 config/.vts_token
+
+# 环境变量：除了示例文件，其余都忽略
+.env.*
+!.env.example
+
+# 以后 memory.py 生成的 SQLite（观众昵称也算数据，不该进 repo）
+*.db
+*.sqlite3
+
+# 编辑器 / 系统垃圾文件
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Claude Code 本机设置
+.claude/settings.local.json
+
+*.docx
+
+# 短视频计划（私有）
+docs/tiktok-14-day-plan.md
